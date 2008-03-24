@@ -1,0 +1,11 @@
+D:\Holograph Emulator\obj\Debug\Holograph Emulator.vbproj.ResolveComReference.cache
+D:\Holograph Emulator\bin\Debug\Holograph Emulator.exe
+D:\Holograph Emulator\bin\Debug\Holograph Emulator.pdb
+D:\Holograph Emulator\bin\Debug\Holograph Emulator.xml
+D:\Holograph Emulator\bin\Debug\HoloENCODING.dll
+D:\Holograph Emulator\obj\Debug\ResolveAssemblyReference.cache
+D:\Holograph Emulator\obj\Debug\HOLO.Resources.resources
+D:\Holograph Emulator\obj\Debug\Holograph Emulator.vbproj.GenerateResource.Cache
+D:\Holograph Emulator\obj\Debug\Holograph Emulator.exe
+D:\Holograph Emulator\obj\Debug\Holograph Emulator.xml
+D:\Holograph Emulator\obj\Debug\Holograph Emulator.pdb
