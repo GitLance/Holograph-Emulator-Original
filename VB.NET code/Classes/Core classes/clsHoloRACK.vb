@@ -1,7 +1,8 @@
 ﻿Public Class clsHoloRACK
     Friend configFileLocation As String
-    Friend sPort As Integer
-    Friend maxConnections As Integer
+    Friend gameSocket_Port, gameSocket_maxConnections As Integer
+    Friend musSocket_Port, musSocket_maxConnections As Integer, musSocket_Host As String
+
     Friend freeScks As String
     Friend onlineCount As Integer
     Friend onlinePeak As Integer

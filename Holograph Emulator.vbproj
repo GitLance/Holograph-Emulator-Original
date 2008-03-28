@@ -81,21 +81,22 @@
     <Import Include="System.Linq" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="VB.NET code\Classes\Core classes\clsHoloDB.vb" />
+    <Compile Include="VB.NET code\Classes\Core classes\Connections\clsHoloDB.vb" />
+    <Compile Include="VB.NET code\Classes\Core classes\clsHoloILIST.vb" />
     <Compile Include="VB.NET code\Classes\Core classes\clsHoloMISC.vb" />
     <Compile Include="VB.NET code\Classes\Core classes\clsHoloRACK.vb" />
+    <Compile Include="VB.NET code\Classes\Core classes\Connections\clsHoloMUSMGR.vb" />
+    <Compile Include="VB.NET code\Classes\Other classes\consoleHelper.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\clsHoloROOM.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\Games\BattleBall\clsHoloBBGAMELOBBY.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\Games\BattleBall\clsHoloBBGAME.vb" />
-    <Compile Include="VB.NET code\Classes\Room classes\Pathfinding\clsHoloMAPHEAP.vb" />
-    <Compile Include="VB.NET code\Classes\Room classes\Pathfinding\clsHoloMAPNODE.vb" />
-    <Compile Include="VB.NET code\Classes\Room classes\Pathfinding\clsHoloPATHFINDER.vb" />
-    <Compile Include="VB.NET code\Classes\Socket &amp; user classes\clsHoloUSERDETAILS.vb" />
-    <Compile Include="VB.NET code\Classes\Socket &amp; user classes\clsHoloSCKMGR.vb" />
+    <Compile Include="VB.NET code\Classes\Room classes\clsHoloPATHFINDER.vb" />
+    <Compile Include="VB.NET code\Classes\User classes\clsHoloUSERDETAILS.vb" />
+    <Compile Include="VB.NET code\Classes\Core classes\Connections\clsHoloSCKMGR.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\clsHoloSTATICMODEL.vb" />
-    <Compile Include="VB.NET code\Classes\Socket &amp; user classes\clsHoloUSER.vb" />
+    <Compile Include="VB.NET code\Classes\User classes\clsHoloUSER.vb" />
     <Compile Include="VB.NET code\Classes\Core classes\clsHoloMANAGERS.vb" />
-    <Compile Include="VB.NET code\Classes\Socket &amp; user classes\clsHoloRANK.vb" />
+    <Compile Include="VB.NET code\Classes\User classes\clsHoloRANK.vb" />
     <Compile Include="VB.NET code\Modules\mainHoloAPP.vb" />
     <Compile Include="VB.NET code\Modules\mainHoloCORE.vb" />
     <Compile Include="VB.NET code\Modules\mainHoloWINDOWS.vb" />

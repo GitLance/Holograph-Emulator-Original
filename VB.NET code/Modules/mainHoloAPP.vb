@@ -24,7 +24,7 @@ Public Module mainHoloAPP
         Console.WriteLine(" CLIENT: V18")
         Console.WriteLine(" RELEASE TYPE: TRUNK, .NET release")
         Console.WriteLine(vbNullString)
-        If HoloRACK.sPort = 0 Then startServer()
+        If HoloRACK.gameSocket_Port = 0 Then startServer()
     End Sub
     Private Sub startServer()
         '// Dimension the variables
@@ -111,7 +111,6 @@ Public Module mainHoloAPP
             HoloDB.runQuery("UPDATE publicrooms SET incnt_now = '0'")
 
             Console.WriteLine("[MYSQL] Room inside counts reset.")
-            HoloDB.runQuery("TRUNCATE TABLE sso")
             Console.WriteLine("[MYSQL] 'sso' table cleared.")
             Console.WriteLine(vbNullString)
 
@@ -119,18 +118,26 @@ Public Module mainHoloAPP
             Console.WriteLine("[MYSQL] Found " & dbCountCheck(0) & " users, " & dbCountCheck(1) & " guestrooms and " & dbCountCheck(2) & " furnitures.")
             Console.WriteLine(vbNullString)
 
-            '// Read the port from the config.ini file, where the main socket has to listen on
-            .sPort = readINI("sckmgr", "port", .configFileLocation)
-            .maxConnections = readINI("sckmgr", "maxconnections", .configFileLocation)
+            '// Read the game socket port from the config.ini file, where the main socket has to listen on
+            .gameSocket_Port = readINI("sockets", "port_game", .configFileLocation)
+            .gameSocket_maxConnections = readINI("sockets", "maxconnections_game", .configFileLocation)
 
-            '// Set up the socket listener thread and start it
-            Console.WriteLine("[SCKMGR] Setting up socket manager on port " & .sPort & "...")
+            '// Read the mus socket details from the config.ini file, this is for the site socket manager (housekeeping etc)
+            .musSocket_Port = readINI("sockets", "port_mus", .configFileLocation)
+            .musSocket_maxConnections = readINI("sockets", "maxconnections_mus", .configFileLocation)
+            .musSocket_Host = readINI("sockets", "mus_host", .configFileLocation)
 
-            HoloSCKMGR.setupListener()
+            '// Set up the game socket listener
+            Console.WriteLine("[SCKMGR] Setting up socket manager on port " & .gameSocket_Port & "...")
+            HoloSCKMGR.listenConnections()
 
-            serverMonitor.IsBackground = True
-            serverMonitor.Priority = ThreadPriority.Lowest
-            serverMonitor.Start()
+            '// Set up the MUS socket listener
+            Console.WriteLine("[MUSMGR] Setting up MUS socket manager for host [" & .musSocket_Host & "] on port " & .gameSocket_Port + 1 & "...")
+            HoloMUSMGR.listenConnections()
+
+            '// Say we are ready for connections
+            Console.WriteLine("[SERVER] Ready for connections.")
+            Console.WriteLine(vbNullString)
         End With
     End Sub
     Friend Sub stopServer()
@@ -178,7 +185,7 @@ Public Module mainHoloAPP
                 stopServer()
 
             Case "stats" '// View the stats of your database
-                If HoloRACK.sPort > 0 Then
+                If HoloRACK.gameSocket_Port > 0 Then
                     Dim dbStatField() As String
                     dbStatField = HoloDB.runReadArray("SELECT users,guestrooms,furnitures FROM system")
                     Console.WriteLine("[STATS] Holograph Emulator found " & dbStatField(0) & " users, " & dbStatField(1) & " guestrooms and " & dbStatField(2) & " furnitures.")
@@ -200,7 +207,7 @@ Public Module mainHoloAPP
                             Console.WriteLine("ID" & vbTab & "NAME" & vbTab & "RANK" & vbTab & "USERID" & vbTab & "IPADDRESS")
                             Console.WriteLine("***********************************************************")
                             For Each hotelUser As clsHoloUSER In HoloMANAGERS.hookedUsers.Values
-                                Console.WriteLine(hotelUser.classID & vbTab & hotelUser.userDetails.Name & vbTab & hotelUser.userDetails.Rank & vbTab & hotelUser.UserID & vbTab & hotelUser.holoSocket.RemoteEndPoint.ToString.Split(":")(0))
+                                Console.WriteLine(hotelUser.classID & vbTab & hotelUser.userDetails.Name & vbTab & hotelUser.userDetails.Rank & vbTab & hotelUser.UserID & vbTab & hotelUser.userSocket.RemoteEndPoint.ToString.Split(":")(0))
                             Next
                             Console.WriteLine("***********************************************************")
                             Console.WriteLine(vbNullString)

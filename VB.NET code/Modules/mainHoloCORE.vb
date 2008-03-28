@@ -4,6 +4,7 @@ Module mainHoloCORE
     Public sysChar(255) As Char
     Public HoloDB As New clsHoloDB
     Public HoloSCKMGR As New clsHoloSCKMGR
+    Public HoloMUSMGR As New clsHoloMUSMGR
     Public HoloRACK As New clsHoloRACK
     Public HoloMANAGERS As New clsHoloMANAGERS
     Public HoloENCODING As New HoloENCODING '// Jeax's Habbo encoding class for .NET, featuring B64 and VL64
@@ -12,8 +13,6 @@ Module mainHoloCORE
     Public HoloSTATICMODEL(18) As clsHoloSTATICMODEL
 
     Public HoloBBGAMELOBBY As clsHoloBBGAMELOBBY
-
-    Public Pathfinder As clsHoloPATHFINDER
     Public HoloITEM(1000) As cachedItemTemplate
     Function filterPacket(ByVal strData As String) As String
         For c = 1 To 12

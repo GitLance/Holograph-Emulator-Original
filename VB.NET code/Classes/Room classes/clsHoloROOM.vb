@@ -3,7 +3,6 @@ Imports System.Threading
 Public Class clsHoloROOM
     Friend roomID As Integer
     Friend isPublicRoom As Boolean
-    Friend Delegate Sub userClassWorker(ByVal User As clsHoloUSER)
 
     Private roomModel As Byte
     Private publicRoomItems As String
@@ -24,7 +23,7 @@ Public Class clsHoloROOM
     Private ownerID As Integer
     Private walkManager As New Thread(AddressOf manageWalks)
     Private Delegate Sub habbowheelSpinner(ByVal itemID As Integer, ByVal wallPosition As String)
-#Region "Room tasks"
+#Region "Room class tasks"
     Sub New(ByVal thisRoomID As Integer, ByVal isPublic As Boolean)
         roomID = thisRoomID
         isPublicRoom = isPublic
@@ -151,166 +150,130 @@ Public Class clsHoloROOM
     End Sub
     Private Sub manageWalks()
         While True
-            For Each roomUserDetails As clsHoloUSERDETAILS In roomUsers.Values
-                If roomUserDetails.DestX = -1 Then Continue For '// No destination coords set, user is standing still, sitting, laying or w/e
+            '
+            For Each ruD As clsHoloUSERDETAILS In roomUsers.Values
+                If ruD.DestX = -1 Then Continue For
 
-                Dim nextSquareCoords() As Integer = lolSimplePathAsTest(roomUserDetails.PosX, roomUserDetails.PosY, roomUserDetails.DestX, roomUserDetails.DestY)
+                Dim jieksMap(,) As Byte
+                jieksMap = ocState.Clone
 
-                Dim tryX As Integer = nextSquareCoords(0)
-                Dim tryY As Integer = nextSquareCoords(1)
-                Dim willWalk As Boolean = True
+                Try
+                    If ocState(ruD.DestX, ruD.DestY) = 2 Then jieksMap(ruD.DestX, ruD.DestY) = 1
+                    If ocUserHere(ruD.DestX, ruD.DestY) = True Then jieksMap(ruD.DestX, ruD.DestY) = 0
+                Catch
+                End Try
 
-                If tryX AndAlso tryY > -1 Then
-                    If ocState(tryX, tryY) = 0 Then willWalk = False
-                    If willWalk = False Then If ocUserHere(tryX, tryY) = True Then willWalk = False
-                Else
-                    willWalk = False
-                End If
+                Dim Jieks As New clsHoloPATHFINDER(jieksMap)
+                Dim nextCoords() As Integer = Jieks.getNextStep(ruD.PosX, ruD.PosY, ruD.DestX, ruD.DestY)
 
-                roomUserDetails.removeStatus("mv")
-                If roomUserDetails.isSitting = True Then roomUserDetails.removeStatus("sit") : roomUserDetails.isSitting = False
+                ruD.removeStatus("mv")
 
-                If willWalk = False Then
-                    roomUserDetails.DestX = -1
-                    roomUserDetails.DestY = -1
-
-                    If ocState(roomUserDetails.PosX, roomUserDetails.PosY) = 2 Then
-                        roomUserDetails.removeStatus("dance")
-                        roomUserDetails.addStatus("sit", ocSitHeight(roomUserDetails.PosX, roomUserDetails.PosY))
-                        roomUserDetails.rotHead = ocItemRot(roomUserDetails.PosX, roomUserDetails.PosY)
-                        roomUserDetails.isSitting = True
+                If IsNothing(nextCoords) = True Then
+                    If ocState(ruD.PosX, ruD.PosY) = 2 Then '// Seat reached
+                        ruD.removeStatus("dance")
+                        ruD.addStatus("sit", ocSitHeight(ruD.PosX, ruD.PosY))
+                        ruD.rotHead = ocItemRot(ruD.PosX, ruD.PosY)
+                        ruD.DestX = -1
                     End If
                 Else
-                    roomUserDetails.addStatus("mv", tryX & "," & tryY & "," & ocHeight(tryX, tryY))
-                    roomUserDetails.rotHead = nextSquareCoords(2)
+                    ruD.removeStatus("sit")
+                    ruD.addStatus("mv", nextCoords(0) & "," & nextCoords(1) & "," & ocHeight(nextCoords(0), nextCoords(1)))
+                    ruD.rotHead = nextCoords(2)
                 End If
-                roomUserDetails.rotBody = roomUserDetails.rotHead
-                refreshUser(roomUserDetails)
+                ruD.rotBody = ruD.rotHead
 
-                If willWalk = True Then
-                    ocUserHere(roomUserDetails.PosX, roomUserDetails.PosY) = False
-                    ocUserHere(tryX, tryY) = True
-                    roomUserDetails.PosX = tryX
-                    roomUserDetails.PosY = tryY
-                    roomUserDetails.PosH = ocHeight(tryX, tryY)
+                refreshUser(ruD)
+
+                If IsNothing(nextCoords) Then
+                    ruD.DestX = -1
+                Else
+                    ocUserHere(ruD.PosX, ruD.PosY) = False
+                    ruD.PosX = nextCoords(0)
+                    ruD.PosY = nextCoords(1)
+                    ruD.PosH = ocHeight(nextCoords(0), nextCoords(1))
+                    ocUserHere(ruD.PosX, ruD.PosY) = True
                 End If
             Next
-            Thread.Sleep(475)
+            Thread.Sleep(420)
+            '
         End While
     End Sub
-    Private Function getNextCoords(ByVal nowX As Integer, ByVal nowY As Integer, ByVal tox As Integer, ByVal toY As Integer)
-
-    End Function
-    Private Function lolSimplePathAsTest(ByVal nowX As Integer, ByVal nowY As Integer, ByVal toX As Integer, ByVal toY As Integer) As Integer()
-        Dim tmpResult() As Integer = {-1, -1, 0}
-        If nowX > toX And nowY > toY Then
-            tmpResult(0) = nowX - 1
-            tmpResult(1) = nowY - 1
-            tmpResult(2) = 7
-        ElseIf nowX < toX And nowY < toY Then
-            tmpResult(0) = nowX + 1
-            tmpResult(1) = nowY + 1
-            tmpResult(2) = 3
-        ElseIf nowX > toX And nowY < toY Then
-            tmpResult(0) = nowX - 1
-            tmpResult(1) = nowY + 1
-            tmpResult(2) = 5
-        ElseIf nowX < toX And nowY > toY Then
-            tmpResult(0) = nowX + 1
-            tmpResult(1) = nowY - 1
-            tmpResult(2) = 1
-        ElseIf nowX > toX Then
-            tmpResult(0) = nowX - 1
-            tmpResult(1) = nowY
-            tmpResult(2) = 6
-        ElseIf nowX < toX Then
-            tmpResult(0) = nowX + 1
-            tmpResult(1) = nowY
-            tmpResult(2) = 2
-        ElseIf nowY < toY Then
-            tmpResult(0) = nowX
-            tmpResult(1) = nowY + 1
-            tmpResult(2) = 4
-        ElseIf nowY > toY Then
-            tmpResult(0) = nowX
-            tmpResult(1) = nowY - 1
-            tmpResult(2) = 0
-        End If
-
-        Return tmpResult
-    End Function
 #End Region
-#Region "Property returning"
-    Friend Function Heightmap() As String
-        If isPublicRoom = True Then '// This roomclass is for a publicroom
-            Return publicRoomHeightmap
-        Else
-            Return HoloSTATICMODEL(roomModel).strMap
-        End If
-    End Function
-    Friend Function insideUsers() As String
-        Dim userPack As New StringBuilder
+#Region "Room dynamic properties"
+    Friend ReadOnly Property Heightmap() As String
+        Get
+            If isPublicRoom = True Then '// This roomclass is for a publicroom
+                Return publicRoomHeightmap
+            Else
+                Return HoloSTATICMODEL(roomModel).strMap
 
-        For Each roomUserDetails As clsHoloUSERDETAILS In roomUsers.Values
-            With roomUserDetails
-                userPack.Append("i:" & .roomUID & sysChar(13) & _
-                "n:" & .Name & sysChar(13) & _
-                "f:" & .Figure & sysChar(13) & _
-                "s:" & .Sex & sysChar(13) & _
-                "l:" & .PosX & " " & .PosY & " " & .PosH & sysChar(13))
-                If Not (.Mission = vbNullString) Then userPack.Append("c:" & .Mission & sysChar(13))
-                If Not (.nowBadge = vbNullString) Then userPack.Append("b:" & .nowBadge & sysChar(13))
-            End With
-        Next
-
-        Return userPack.ToString
-    End Function
-    Friend Function Items() As String
-        If isPublicRoom = True Then
-            Return "H"
-        Else
-            Dim itemPack As New StringBuilder
-            Dim furnitureItem As furnitureItem
-            itemPack.Append(HoloENCODING.encodeVL64(furnitureItems.Count))
-
-            For Each furnitureItem In furnitureItems.Values
-                Dim templateID As Integer = furnitureItem.tID
-                itemPack.Append(furnitureItem.ID & sysChar(2) & HoloITEM(templateID).cctName & sysChar(2) & HoloENCODING.encodeVL64(furnitureItem.X) & HoloENCODING.encodeVL64(furnitureItem.Y) & HoloENCODING.encodeVL64(HoloITEM(templateID).Length) & HoloENCODING.encodeVL64(HoloITEM(templateID).Width) & HoloENCODING.encodeVL64(furnitureItem.Z) & furnitureItem.H.ToString & sysChar(2) & HoloITEM(templateID).Colour & sysChar(2) & sysChar(2) & "H" & furnitureItem.Var & sysChar(2))
+            End If
+        End Get
+    End Property
+    Friend ReadOnly Property insideUsers() As String
+        Get
+            Dim userPack As New StringBuilder
+            For Each roomUserDetails As clsHoloUSERDETAILS In roomUsers.Values
+                userPack.Append(roomUserDetails.ToString)
             Next
 
-            Return itemPack.ToString
-        End If
-    End Function
-    Friend Function wallItems() As String
-        If isPublicRoom = True Then
-            Return vbNullString
-        Else
-            Dim wallItemPack As New StringBuilder
-            Dim wallItem() As String = HoloDB.runReadArray("SELECT id,tid,opt_var,opt_wallpos FROM furniture WHERE roomid = '" & roomID & "' AND NOT(opt_wallpos IS NULL)", True)
-            For i = 0 To wallItem.Count - 1
-                Dim itemData() As String = wallItem(i).Split(sysChar(9))
-                Dim templateID As Integer = itemData(1)
-                wallItemPack.Append(itemData(0) & sysChar(9) & HoloITEM(templateID).cctName & sysChar(9) & " " & sysChar(9) & itemData(3) & sysChar(9))
-                If itemData(2) = vbNullString Then wallItemPack.Append(HoloITEM(templateID).Colour) Else wallItemPack.Append(itemData(2)) '// If the var is blank, then add the wallitem's 'colour', if it isn't blank, add it's var [var = special variable for item, like light on/off]
-                wallItemPack.Append(sysChar(13))
+            Return userPack.ToString
+        End Get
+    End Property
+    Friend ReadOnly Property Items() As String
+        Get
+            If isPublicRoom = True Then
+                Return "H"
+            Else
+                Dim itemPack As New StringBuilder
+                Dim furnitureItem As furnitureItem
+                itemPack.Append(HoloENCODING.encodeVL64(furnitureItems.Count))
+
+                For Each furnitureItem In furnitureItems.Values
+                    Dim templateID As Integer = furnitureItem.tID
+                    itemPack.Append(furnitureItem.ToString)
+                Next
+
+                Return itemPack.ToString
+            End If
+        End Get
+    End Property
+    Friend ReadOnly Property wallItems() As String
+        Get
+            If isPublicRoom = True Then
+                Return vbNullString
+            Else
+                Dim wallItemPack As New StringBuilder
+                Dim wallItem() As String = HoloDB.runReadArray("SELECT id,tid,opt_var,opt_wallpos FROM furniture WHERE roomid = '" & roomID & "' AND NOT(opt_wallpos IS NULL)", True)
+                For i = 0 To wallItem.Count - 1
+                    Dim itemData() As String = wallItem(i).Split(sysChar(9))
+                    Dim templateID As Integer = itemData(1)
+                    wallItemPack.Append(itemData(0) & sysChar(9) & HoloITEM(templateID).cctName & sysChar(9) & " " & sysChar(9) & itemData(3) & sysChar(9))
+                    If itemData(2) = vbNullString Then wallItemPack.Append(HoloITEM(templateID).Colour) Else wallItemPack.Append(itemData(2)) '// If the var is blank, then add the wallitem's 'colour', if it isn't blank, add it's var [var = special variable for item, like light on/off]
+                    wallItemPack.Append(sysChar(13))
+                Next
+                Return wallItemPack.ToString
+            End If
+        End Get
+    End Property
+    Friend ReadOnly Property otherItems() As String
+        Get
+            If isPublicRoom = True Then
+                Return publicRoomItems
+            Else
+                Return vbNullString
+            End If
+        End Get
+    End Property
+    Friend ReadOnly Property whosInHereList() As String
+        Get
+            Dim listBuilder As New StringBuilder(HoloENCODING.encodeVL64(roomID) & HoloENCODING.encodeVL64(roomUsers.Count))
+            For Each roomUserDetails As clsHoloUSERDETAILS In roomUsers.Values
+                listBuilder.Append(roomUserDetails.Name & sysChar(2))
             Next
-            Return wallItemPack.ToString
-        End If
-    End Function
-    Friend Function otherItems() As String
-        If isPublicRoom = True Then
-            Return publicRoomItems
-        Else
-            Return vbNullString
-        End If
-    End Function
-    Function whosInHere() As String
-        Dim listBuilder As New StringBuilder(HoloENCODING.encodeVL64(roomID) & HoloENCODING.encodeVL64(roomUsers.Count))
-        For Each roomUserDetails As clsHoloUSERDETAILS In roomUsers.Values
-            listBuilder.Append(roomUserDetails.Name & sysChar(2))
-        Next
-        Return listBuilder.ToString
-    End Function
+            Return listBuilder.ToString
+        End Get
+    End Property
 #End Region
 #Region "User management"
     Friend Sub enterUser(ByRef newUser As clsHoloUSERDETAILS)
@@ -333,37 +296,22 @@ Public Class clsHoloROOM
         newUser.PosY = doorY
         newUser.PosH = doorH
 
-        Dim enterPack As New StringBuilder("@\")
-        With newUser
-            enterPack.Append("i:" & .roomUID & sysChar(13))
-            enterPack.Append("n:" & .Name & sysChar(13))
-            enterPack.Append("f:" & .Figure & sysChar(13))
-            enterPack.Append("s:" & .Sex & sysChar(13))
-            enterPack.Append("l:" & .PosX & " " & .PosY & " " & .PosH & sysChar(13))
-            If Not (.Mission = vbNullString) Then enterPack.Append("c:" & .Mission & sysChar(13))
-            If Not (.nowBadge = vbNullString) Then enterPack.Append("b:" & .nowBadge & sysChar(13))
-        End With
-
-        enterPack.Append(sysChar(1))
-        sendAll(enterPack.ToString) '// Send the users 'I have entered room and this is how I look if you don't like me then ignore me kthx' info :D
-
-        Dim roomType As String = "guestrooms"
-        If isPublicRoom = True Then roomType = "publicrooms"
-
-        '// Update the inside users count for this room
-        HoloDB.runQuery("UPDATE " & roomType & " SET incnt_now = '" & roomUsers.Count & "' WHERE id = '" & roomID & "' LIMIT 1")
+        sendAll("@\" & newUser.ToString & sysChar(1)) '// Make user appear in room
 
         '// Get & send the entering user the full statuses of the inside users, so they appear with dancing, fucking, waving or w/e
         Dim refreshPack As New StringBuilder("@b")
-
         For Each roomUser As clsHoloUSERDETAILS In roomUsers.Values
             With roomUser
                 refreshPack.Append(.roomUID & " " & .PosX & "," & .PosY & "," & .PosH & "," & .rotHead & "," & .rotBody & "/" & roomUser.getStatuses & "/" & sysChar(13))
             End With
         Next
-
         refreshPack.Append(sysChar(1))
         newUser.userClass.transData(refreshPack.ToString)
+
+        '// Update room inside count
+        Dim roomType As String = "guestrooms"
+        If isPublicRoom = True Then roomType = "publicrooms"
+        HoloDB.runQuery("UPDATE " & roomType & " SET incnt_now = '" & roomUsers.Count & "' WHERE id = '" & roomID & "' LIMIT 1")
 
         If walkManager.IsAlive = False Then walkManager.Start()
     End Sub
@@ -456,7 +404,7 @@ Public Class clsHoloROOM
 
                 If HoloITEM(templateID).cctName = "roomdimmer" Then
                     HoloDB.runQuery("UPDATE furniture_moodlight SET roomid = '" & roomID & "' WHERE id = '" & itemID & "' LIMIT 1")
-                    sendAll("AU" & itemID & sysChar(9) & " roomdimmer " & sysChar(9) & wallPosition & sysChar(9) & HoloDB.runRead("SELECT opt_var FROM furniture WHERE id = '" & itemID & "' LIMIT 1") & sysChar(1))
+                    refreshWallitem(itemID, "roomdimmer", wallPosition, HoloDB.runRead("SELECT opt_var FROM furniture WHERE id = '" & itemID & "' LIMIT 1"))
                 End If
             Else '// Floor item
                 Dim packetContent() As String = placePacket.Split(" ")
@@ -599,11 +547,22 @@ Public Class clsHoloROOM
         End If
         HoloDB.runQuery("UPDATE furniture SET roomid = '0',inhand = '" & userID & "',x = '0',y = '0',z = '0',h = '0',opt_wallpos = NULL WHERE id = '" & itemID & "' LIMIT 1")
     End Sub
+    Private Sub refreshWallitem(ByVal itemID As Integer, ByVal cctName As String, ByVal wallPosition As String, ByVal itemVariable As String)
+        sendAll("AU" & itemID & sysChar(9) & " " & cctName & " " & sysChar(9) & wallPosition & sysChar(9) & itemVariable & sysChar(1))
+    End Sub
+    Friend Sub signWallitem(ByVal itemID As Integer, ByVal toStatus As String)
+        Dim itemData() As String = HoloDB.runReadArray("SELECT tid,opt_wallpos FROM furniture WHERE id = '" & itemID & "' AND roomid = '" & roomID & "' LIMIT 1")
+        If itemData.Count = 0 Then Return '// Item not found/not in this room
+
+        refreshWallitem(itemID, HoloITEM(Integer.Parse(itemData(0))).cctName, itemData(1), toStatus)
+        HoloDB.runQuery("UPDATE furniture SET var = '" & toStatus & "' WHERE id = '" & itemID & "' LIMIT 1")
+    End Sub
 #Region "Habbowheel"
     Friend Sub spinHabbowheel(ByVal itemID As Integer)
         Dim wallPosition As String = HoloDB.runRead("SELECT opt_wallpos FROM furniture WHERE roomid = '" & roomID & "' AND id = '" & itemID & "' LIMIT 1")
         If wallPosition = vbNullString Then Return '// Item not found/not in this room
-        sendAll("AU" & itemID & sysChar(9) & " habbowheel " & sysChar(9) & wallPosition & sysChar(9) & "-1" & sysChar(1))
+
+        refreshWallitem(itemID, "habbowheel", wallPosition, "-1")
         Dim spinAction As New habbowheelSpinner(AddressOf spinHabbowheel_Finish)
         spinAction.BeginInvoke(itemID, wallPosition, Nothing, Nothing)
     End Sub
@@ -613,27 +572,29 @@ Public Class clsHoloROOM
         Dim stopAt As New Integer
         Dim v As New Random
         stopAt = v.Next(0, 10)
-        sendAll("AU" & itemID & sysChar(9) & " habbowheel " & sysChar(9) & wallPosition & sysChar(9) & stopAt & sysChar(1))
+        refreshWallitem(itemID, "habbowheel", wallPosition, stopAt)
     End Sub
 #End Region
 #Region "Moodlight"
-    Friend Function moodLight_GetSettings() As String
-        Try
-            Dim itemSettings() As String = HoloDB.runReadArray("SELECT preset_cur,preset_1,preset_2,preset_3 FROM furniture_moodlight WHERE roomid = '" & roomID & "' LIMIT 1")
-            Dim settingPack As String = HoloENCODING.encodeVL64(3) & HoloENCODING.encodeVL64(itemSettings(0))
+    Friend ReadOnly Property moodLight_GetSettings() As String
+        Get
+            Try
+                Dim itemSettings() As String = HoloDB.runReadArray("SELECT preset_cur,preset_1,preset_2,preset_3 FROM furniture_moodlight WHERE roomid = '" & roomID & "' LIMIT 1")
+                Dim settingPack As String = HoloENCODING.encodeVL64(3) & HoloENCODING.encodeVL64(itemSettings(0))
 
-            For i = 1 To 3
-                Dim curPresetData() As String = itemSettings(i).Split(",")
-                settingPack += HoloENCODING.encodeVL64(i) & HoloENCODING.encodeVL64(curPresetData(0)) & curPresetData(1) & sysChar(2) & HoloENCODING.encodeVL64(curPresetData(2))
-            Next
+                For i = 1 To 3
+                    Dim curPresetData() As String = itemSettings(i).Split(",")
+                    settingPack += HoloENCODING.encodeVL64(i) & HoloENCODING.encodeVL64(curPresetData(0)) & curPresetData(1) & sysChar(2) & HoloENCODING.encodeVL64(curPresetData(2))
+                Next
 
-            Return settingPack
+                Return settingPack
 
-        Catch
-            Return vbNullString
+            Catch
+                Return vbNullString
 
-        End Try
-    End Function
+            End Try
+        End Get
+    End Property
     Friend Sub moodLight_SetSettings(ByVal isEnabled As Boolean, ByVal presetID As Integer, ByVal bgState As Integer, ByVal presetColour As String, ByVal alphaDarkF As Integer)
         Dim itemID As Integer = HoloDB.runRead("SELECT id FROM furniture_moodlight WHERE roomid = '" & roomID & "' LIMIT 1")
         Dim newPresetValue As String
@@ -647,29 +608,40 @@ Public Class clsHoloROOM
             HoloDB.runQuery("UPDATE furniture_moodlight SET preset_cur = '" & presetID & "',preset_" & presetID & " = '" & bgState & "," & presetColour & "," & alphaDarkF & "' WHERE id = '" & itemID & "' LIMIT 1")
         End If
         Dim wallPosition As String = HoloDB.runRead("SELECT opt_wallpos FROM furniture WHERE id = '" & itemID & "' LIMIT 1")
-        sendAll("AU" & itemID & sysChar(9) & " roomdimmer " & sysChar(9) & wallPosition & sysChar(9) & newPresetValue & sysChar(1))
+        refreshWallitem(itemID, "roomdimmer", wallPosition, newPresetValue)
     End Sub
 #End Region
-    Private Function getItemLength(ByVal templateID As Integer, ByVal itemRotation As Integer)
-        If itemRotation = 2 Or itemRotation = 6 Then
-            Return HoloITEM(templateID).Length
-        Else
-            Return HoloITEM(templateID).Width
-        End If
-    End Function
-    Private Function getItemWidth(ByVal templateID As Integer, ByVal itemRotation As Integer)
-        If itemRotation = 2 Or itemRotation = 6 Then
-            Return HoloITEM(templateID).Width
-        Else
-            Return HoloITEM(templateID).Length
-        End If
-    End Function
+    Private ReadOnly Property getItemLength(ByVal templateID As Integer, ByVal itemRotation As Integer)
+        Get
+            If itemRotation = 2 Or itemRotation = 6 Then
+                Return HoloITEM(templateID).Length
+            Else
+                Return HoloITEM(templateID).Width
+            End If
+        End Get
+    End Property
+    Private ReadOnly Property getItemWidth(ByVal templateID As Integer, ByVal itemRotation As Integer)
+        Get
+            If itemRotation = 2 Or itemRotation = 6 Then
+                Return HoloITEM(templateID).Width
+            Else
+                Return HoloITEM(templateID).Length
+            End If
+        End Get
+    End Property
 #End Region
+#Region "Private room classes"
     Private Class furnitureItem
         Friend ID As Integer
         Friend tID As Integer
         Friend X, Y, Z As Integer
         Friend H As Double
         Friend Var As String
+        Friend Shadows ReadOnly Property ToString()
+            Get
+                Return ID & sysChar(2) & HoloITEM(tID).cctName & sysChar(2) & HoloENCODING.encodeVL64(X) & HoloENCODING.encodeVL64(Y) & HoloENCODING.encodeVL64(HoloITEM(tID).Length) & HoloENCODING.encodeVL64(HoloITEM(tID).Width) & HoloENCODING.encodeVL64(Z) & H.ToString & sysChar(2) & HoloITEM(tID).Colour & sysChar(2) & sysChar(2) & "H" & Var & sysChar(2)
+            End Get
+        End Property
     End Class
+#End Region
 End Class
