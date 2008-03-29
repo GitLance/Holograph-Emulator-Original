@@ -748,6 +748,13 @@ Public Class clsHoloUSER
                 If userDetails.isOwner = False Then Return
                 roomCommunicator.moodLight_SetSettings(False, 0, 0, vbNullString, 0)
 
+            Case "CV" '// Put wallitem on/off [signing]
+                Dim itemID As String = currentPacket.Substring(4, HoloENCODING.decodeB64(currentPacket.Substring(2, 2)))
+                Dim toStatus As String = currentPacket.Substring(itemID.Length + 6)
+                roomCommunicator.signWallitem(itemID, toStatus)
+
+            Case "AJ" '// Put floor item on/off [signing]
+                'cba for now, eating =]
 
         End Select
         'Catch ex As Exception
