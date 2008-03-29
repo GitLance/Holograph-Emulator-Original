@@ -78,9 +78,7 @@ Public Class clsHoloMUSMGR
                     Case "HKSB" '// Housekeeping - ban user & kick from room :: "HKSB123This is a test ban for user with ID 123"
                         Dim userID As Integer = musData(0)
                         Dim strMessage As String = musData(1)
-                        Dim userClass As clsHoloUSER = HoloMANAGERS.getUserClass(userID)
-                        userClass.Room_noRoom(True, True)
-                        userClass.transData("@c" & strMessage & sysChar(1))
+                        HoloMANAGERS.getUserClass(userID).handleBan(strMessage)
 
                     Case "HKRC" '// Housekeeping - rehash catalogue :: "HKRC"
                         mainHoloAPP.cacheCatalogue()

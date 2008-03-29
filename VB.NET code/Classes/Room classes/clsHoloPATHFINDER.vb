@@ -129,12 +129,6 @@
             addSuccessor(X, Y - 1)
             addSuccessor(X + 1, Y)
 
-            addSuccessor(X - 1, Y - 1)
-            addSuccessor(X + 1, Y - 1)
-            addSuccessor(X + 1, Y + 1)
-            addSuccessor(X - 1, Y + 1)
-            Return
-
             '// Cornering [less paths, need to fix!]
             If parentPather.getSqState(X, Y - 1) > 0 Then If parentPather.getSqState(X - 1, Y) > 0 Then addSuccessor(X - 1, Y - 1)
             If parentPather.getSqState(X, Y - 1) > 0 Then If parentPather.getSqState(X + 1, Y) > 0 Then addSuccessor(X + 1, Y - 1)

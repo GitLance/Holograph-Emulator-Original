@@ -6,7 +6,7 @@ Imports System.Collections
 Public Class clsHoloUSER
 #Region "User server class properties"
     '// Socket
-    Friend userSocket As Socket '// Users socket instance
+    Private userSocket As Socket '// Users socket instance
     Friend classID As Integer '// Users socket/class ID
     Friend UserID As Integer '// Users ID in database
     Friend userDetails As clsHoloUSERDETAILS '// Users set of data
@@ -139,8 +139,7 @@ Public Class clsHoloUSER
                 Dim banDetails() As String = HoloDB.runReadArray("SELECT ipaddress,date_expire,descr FROM users_bans WHERE userid = '" & userID & "' OR ipaddress = '" & socketIP & "' LIMIT 1") '// Try getting details about "this user/ipaddress is banned"
                 If banDetails.Count > 0 Then '// Banned data found for this user/IP address, user/IP address banned
                     If DateTime.Compare(DateTime.Parse(banDetails(0)), DateTime.Now) > 0 Then '// Ban is still active
-                        transData("@c" & banDetails(1) & sysChar(1)) '// Send 'you're banned!' message + the reason
-                        killConnection("Banned user/ipaddress!") '// Drop this connection
+                        handleBan(banDetails(2)) '// Handle this ban
                         Return
                     Else
                         If banDetails(0) = vbNullString Then '// The IP address field was empty, user WAS just user banned, lift users ban now
@@ -760,7 +759,7 @@ Public Class clsHoloUSER
         If killedConnection = True Then Return '// Already killed connnection
 
         On Error Resume Next '// Just let it handle this procedure, we're not interested in any error catching or w/e
-        userSocket.Close() '// Close the connection
+        userSocket.Close(1) '// Wait a second and then close the socket
 
         If HoloMANAGERS.hookedUsers.ContainsKey(UserID) = True Then HoloMANAGERS.hookedUsers.Remove(Me) '// Remove this user class from the hookedUsers
         If pingManager.IsAlive = True Then pingManager.Abort() '// If the userpinger is running (obv in most cases) then abort it
@@ -909,6 +908,13 @@ Public Class clsHoloUSER
     Friend Sub refreshValuables()
         Dim userData() As String = HoloDB.runReadArray("SELECT credits,tickets FROM users WHERE id = '" & UserID & "' LIMIT 1")
         transData("@F" & userData(0) & sysChar(1) & "A|" & userData(1) & sysChar(1))
+    End Sub
+    Friend Sub handleBan(ByVal strMessage As String)
+        Try
+            transData("@c" & strMessage & sysChar(1))
+            killConnection("Banned [" & strMessage & "]")
+        Catch
+        End Try
     End Sub
 #End Region
 #Region "Console (messenger) actions"

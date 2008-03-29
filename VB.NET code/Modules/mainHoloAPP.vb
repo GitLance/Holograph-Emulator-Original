@@ -111,8 +111,8 @@ Public Module mainHoloAPP
             HoloDB.runQuery("UPDATE publicrooms SET incnt_now = '0'")
 
             Console.WriteLine("[MYSQL] Room inside counts reset.")
-            HoloDB.runQuery("TRUNCATE TABLE sso")
-            Console.WriteLine("[MYSQL] 'sso' table cleared.")
+            HoloDB.runQuery("UPDATE users SET ticket_sso = NULL")
+            Console.WriteLine("[MYSQL] SSO login tickets nulled.")
             Console.WriteLine(vbNullString)
 
             '// Display the current database counts
