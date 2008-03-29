@@ -149,30 +149,30 @@ Public Class clsHoloUSER
                         End If
                     End If
                 Else '// Not banned, proceed login
-                    '// Inherited from old V9 login retros, drop already logged instances of this user
+                    '// Inherited from old V9 login retros, drop already logged instances of this user [like if they login on second browser]
                     Dim oldSessionUser As clsHoloUSER = HoloMANAGERS.getUserClass(userID)
-                    If IsNothing(oldSessionUser) = False Then '// Still clone active
+                    If IsNothing(oldSessionUser) = False Then '// Someone already logged in on this account
                         oldSessionUser.killConnection("New instance of this user logged in.")
                         If HoloMANAGERS.hookedUsers.ContainsKey(userID) = True Then HoloMANAGERS.hookedUsers.Remove(userID) '// For some reason kill connection didn't removed the old user from the hooked users hashtable
-                    Else
-                        Me.UserID = userID
-                        userDetails = New clsHoloUSERDETAILS(Me)
-                        Dim userData() As String = HoloDB.runReadArray("SELECT name,figure,sex,mission,rank,consolemission FROM users WHERE id = '" & userID & "' LIMIT 1") '// Get users details
-                        userDetails.UserID = userID
-                        userDetails.Name = userData(0)
-                        userDetails.Figure = userData(1)
-                        userDetails.Sex = Char.Parse(userData(2))
-                        userDetails.Mission = userData(3)
-                        userDetails.Rank = userData(4)
-                        userDetails.consoleMission = userData(5)
-
-                        HoloMANAGERS.hookedUsers.Add(userID, Me)
-                        transData("@C" & sysChar(1)) '// Let client proceed with login
-
-                        '// Background shizzle
-                        HoloDB.runQuery("UPDATE users SET ticket_sso = NULL WHERE id = '" & userID & "' LIMIT 1") '// Null the users SSO ticket, since it has been used
-                        Console.WriteLine("User [" & userDetails.Name & "] authenticated successfully during login! Hey guess what, he loves Nillus! :D")
                     End If
+
+                    Me.UserID = userID
+                    userDetails = New clsHoloUSERDETAILS(Me)
+                    Dim userData() As String = HoloDB.runReadArray("SELECT name,figure,sex,mission,rank,consolemission FROM users WHERE id = '" & userID & "' LIMIT 1") '// Get users details
+                    userDetails.UserID = userID
+                    userDetails.Name = userData(0)
+                    userDetails.Figure = userData(1)
+                    userDetails.Sex = Char.Parse(userData(2))
+                    userDetails.Mission = userData(3)
+                    userDetails.Rank = userData(4)
+                    userDetails.consoleMission = userData(5)
+
+                    HoloMANAGERS.hookedUsers.Add(userID, Me)
+                    transData("@C" & sysChar(1)) '// Let client proceed with login
+
+                    '// Background shizzle
+                    HoloDB.runQuery("UPDATE users SET ticket_sso = NULL WHERE id = '" & userID & "' LIMIT 1") '// Null the users SSO ticket, since it has been used
+                    Console.WriteLine("User [" & userDetails.Name & "] authenticated successfully during login! Hey guess what, he loves Nillus! :D")
                 End If
 
             Case "@G" '// Send users appearance etc + the fuserights

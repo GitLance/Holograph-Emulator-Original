@@ -140,26 +140,18 @@ Public Module mainHoloAPP
         End With
     End Sub
     Friend Sub stopServer()
-        Dim folCataPath As String
         Console.WriteLine(vbNullString)
+
+        '// Stop the extra thread(s) if they are started
+        If serverMonitor.IsAlive = True Then serverMonitor.Abort()
+
+        '// Set the online count to 0 and null the SSO tickets
+        HoloDB.runQuery("UPDATE system SET online_count = '0'")
+        HoloDB.runQuery("UPDATE users SET ticket_sso = NULL")
 
         '// Close the database connection
         Console.WriteLine("[MYSQL] Closing existing database connection...")
         HoloDB.closeConnection()
-
-        '// Dump the catalogue .bin files
-        Console.WriteLine("[SERVER] Dumping catalogue .bin files...")
-
-        Console.WriteLine("[SERVER] Shutting down...")
-
-        '// Set the catalogue folder location
-        folCataPath = My.Application.Info.DirectoryPath & "\bin\catalogue"
-
-        '// Dump the folder (if it exists)
-        'If My.Computer.FileSystem.DirectoryExists(folCataPath) = True Then My.Computer.FileSystem.DeleteDirectory(folCataPath, FileIO.DeleteDirectoryOption.DeleteAllContents)
-
-        '// Stop the extra thread(s) if they are started
-        If serverMonitor.IsAlive = True Then serverMonitor.Abort()
 
         '// Wait 1,5 seconds so the user can read the messages displayed
         Sleep(1500)
