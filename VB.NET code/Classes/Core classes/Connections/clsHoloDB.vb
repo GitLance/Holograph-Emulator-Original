@@ -11,7 +11,7 @@
             Return True
 
         Catch ex As Exception '// Error occured!
-            Console.WriteLine("[MYSQL] Epic fail at connecting, error Thrown was: " & ex.Message)
+            Console.WriteLine("[MYSQL] Epic fail at connecting, error thrown was: " & ex.Message)
             stopServer()
 
         End Try

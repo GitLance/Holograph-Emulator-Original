@@ -44,18 +44,52 @@ Public Class clsHoloMUSMGR
             Connector.BeginReceive(dataBuffer, 0, dataBuffer.Length, SocketFlags.None, New AsyncCallback(AddressOf dataArrival), Nothing)
         End Sub
         Private Sub dataArrival(ByVal c As IAsyncResult)
-            Dim bytesReceived As Integer = Connector.EndReceive(c)
 lol:
             Try
+                Dim bytesReceived As Integer = Connector.EndReceive(c)
                 Dim strData As String = Encoding.ASCII.GetString(dataBuffer, 0, bytesReceived)
                 Console.WriteLine(strData)
 
                 If strData.Substring(0, 1) = "r" Then '// Camera binary transfer
-                    Dim binChunk() As String
-                    binChunk = strData.Split(sysChar(0))
-                    binChunk = strData.Split(sysChar(1))
-                    binChunk = strData.Split(sysChar(5))
-                    binChunk = strData.Split(sysChar(6))
+                    Dim binChunk() As String = strData.Split(sysChar(0))
+                    'Dim resData As String : For i = 0 To binChunk.Count - 1 : resData += binChunk(i) : Next
+
+                    MsgBox(binChunk.Count)
+                    Dim toDo As String = strData.Split(sysChar(0))(15).Substring(1)
+                    MsgBox(toDo)
+                    Dim doPack As New StringBuilder
+
+                    If toDo = "Logon" Then
+                        sendData(sysChar(114)) '// Send 'r'
+                        doPack.Append(sysChar(0), 4) '// Send 4 nulls
+                        doPack.Append("0") '// Send a 0
+                        doPack.Append(sysChar(0), 12)
+                        doPack.Append("Logon")
+                        doPack.Append(sysChar(0), 5)
+                        doPack.Append("System")
+                        doPack.Append(sysChar(0), 8)
+                        doPack.Append("!")
+                        doPack.Append(sysChar(0), 7)
+                        doPack.Append("FUSE")
+                        doPack.Append(sysChar(114))
+                        doPack.Append(sysChar(0), 4)
+                        doPack.Append("4")
+                        doPack.Append(sysChar(0), 12)
+                        doPack.Append("HELLO")
+                        doPack.Append(sysChar(0), 5)
+                        doPack.Append("System")
+                        doPack.Append(sysChar(0), 8)
+                        doPack.Append("!")
+                        doPack.Append(sysChar(0), 7)
+                        doPack.Append("1")
+                        doPack.Append(sysChar(0))
+                    End If
+
+                    sendData(doPack.ToString)
+                    Threading.Thread.Sleep(1000)
+                    killConnection()
+                    'Connector.BeginReceive(dataBuffer, 0, dataBuffer.Length, SocketFlags.None, New AsyncCallback(AddressOf dataArrival), Nothing)
+                    Return
                 Else '// HoloCMS MUS socket handling
                     If Not (Connector.RemoteEndPoint.ToString.Split(":")(0) = HoloRACK.musSocket_Host) Then killConnection() '// Packet comes not from HoloCMS server
                     Dim musHeader As String = strData.Substring(0, 4)
@@ -119,10 +153,16 @@ lol:
             killConnection() '// Action successfully processed, dump this mus socket
             GoTo lol
         End Sub
+        Private Sub sendData(ByVal strData As String)
+            Dim dataBytes() As Byte = Encoding.ASCII.GetBytes(strData)
+            '// NO ASYNC :D | Connector.BeginSend(dataBytes, 0, dataBytes.Length, SocketFlags.None, New AsyncCallback(AddressOf sendData_complete), Nothing)
+            Connector.Send(dataBytes, 0, dataBytes.Length, SocketFlags.None)
+            Console.WriteLine(strData)
+        End Sub
         Private Sub killConnection()
             On Error Resume Next
             Connector.Close()
-            Me.Finalize()
+            'Me.Finalize()
         End Sub
     End Class
 End Class

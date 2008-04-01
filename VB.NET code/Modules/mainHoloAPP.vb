@@ -142,6 +142,7 @@ Public Module mainHoloAPP
         Console.WriteLine(vbNullString)
     End Sub
     Friend Sub stopServer()
+        On Error Resume Next
         Console.WriteLine(vbNullString)
 
         '// Stop the extra thread(s) if they are started
@@ -181,7 +182,7 @@ Public Module mainHoloAPP
                     Dim dbStatField() As String
                     dbStatField = HoloDB.runReadArray("SELECT users,guestrooms,furnitures FROM system")
                     Console.WriteLine("[STATS] Holograph Emulator found " & dbStatField(0) & " users, " & dbStatField(1) & " guestrooms and " & dbStatField(2) & " furnitures.")
-                    Console.WriteLine("[STATS] Online users: " & HoloRACK.onlineCount & ", online peak: " & HoloRACK.onlinePeak & ", accepted connections: " & HoloRACK.acceptedConnections & ".")
+                    Console.WriteLine("[STATS] Online users: " & HoloMANAGERS.hookedUsers.Count & ", online peak: " & HoloRACK.onlinePeak & ", accepted connections: " & HoloRACK.acceptedConnections & ".")
                 Else
                     Console.WriteLine("[ERROR] Not connected to database.")
                 End If
@@ -218,7 +219,6 @@ Public Module mainHoloAPP
 
             '// Reset all preferences
             .wordFilter_Enabled = False
-            .ssoLogin = False
             .welcMessage = vbNullString
             .chat_animations = True
 
@@ -232,9 +232,6 @@ Public Module mainHoloAPP
             Else
                 Console.WriteLine("[WFILTER] Word filter disabled.")
             End If
-
-            '// Load the login choice
-            If readINI("login", "sso", .configFileLocation) = "1" Then .ssoLogin = True
 
             '// Load the welcome message from system table, if welcome messages are enabled
             If readINI("login", "welcome_message", .configFileLocation) = "1" Then .welcMessage = HoloDB.runRead("SELECT welcome_message FROM system")
@@ -325,6 +322,7 @@ Public Module mainHoloAPP
             Dim memUsage As Integer = GC.GetTotalMemory(False) / 1024
             Console.Title = "Holograph Emulator | online users: " & onlineCount & " | loaded rooms: " & HoloMANAGERS.hookedRooms.Count & " | RAM usage: " & memUsage & "KB"
             HoloDB.runQuery("UPDATE system SET onlinecount = '" & onlineCount & "'")
+            If onlineCount > HoloRACK.onlinePeak Then HoloRACK.onlinePeak = onlineCount
             Thread.Sleep(3500) '// Wait 3,5 seconds before updating stats again
         End While
     End Sub

@@ -5,26 +5,22 @@ Imports System.Text
 Imports System.Collections
 Public Class clsHoloUSER
 #Region "User server class properties"
-    '// Socket
     Private userSocket As Socket '// Users socket instance
     Friend classID As Integer '// Users socket/class ID
     Friend UserID As Integer '// Users ID in database
     Friend userDetails As clsHoloUSERDETAILS '// Users set of data
     Friend roomCommunicator As clsHoloROOM '// Reference to the room class used to communicate between this user and it's room
 
-    Private byteDataGroup(1024) As Byte '// User's current incoming data group
-    Private currentPacket As String '// Current processing packet, so the subs can access it
+    Private dataBuffer(1024) As Byte '// User's current incoming data buffer [byte array]
+    Private Delegate Sub asyncPacketHandler() '// Allows asynchronous running of packets
+    Private currentPacket As String '// Current processing packet
     Private killedConnection As Boolean '// To prevent multi-use of the killConnection void
     Private timeOut As Byte '// Users connection status
-    Private pingManager As Thread
+    Private pingManager As Thread '// Thread slot for the pingmanager
     Private receivedItemIndex As Boolean '// If the user received that very big Dg packet containing the hof furni folders of all cct's
-    Private curHandPage As Integer
-
-    Private Delegate Sub actionThread(ByVal actionKey As String, ByVal actionValue As String, ByVal actionLength As Integer) '// A delegate this class can use
-    Private Delegate Sub carryingThread(ByVal itemToCarry As String) '// A delegate for carrying items
-    Private Delegate Sub squareHopperThread()
+    Private curHandPage As Integer '// The current hand page the user is on
 #End Region
-#Region "HoloUSER actions for this class"
+#Region "Constructors"
     Public Sub New(ByVal myClassID As Integer, ByVal myHoloSocket As Socket) '// Create a new instance of HoloUSER and accept connection handling (@@ packet etc)
         Try
             userSocket = myHoloSocket '// Setup the socket for this class
@@ -43,17 +39,19 @@ Public Class clsHoloUSER
 
         End Try
     End Sub
-#Region "Socket management"
+#End Region
+#Region "Socket & packets management"
     Private Sub listenDataArrivals()
         Try
-            userSocket.BeginReceive(byteDataGroup, 0, byteDataGroup.Length, SocketFlags.None, New AsyncCallback(AddressOf dataArrived), 0) '// Set a pending data listener, who hits back to dataArrivalCallback when data is arrived =]
+            userSocket.BeginReceive(dataBuffer, 0, dataBuffer.Length, SocketFlags.None, New AsyncCallback(AddressOf dataArrived), 0) '// Set a pending data listener, who hits back to dataArrivalCallback when data is arrived =]
         Catch
             killConnection("Disconnected!")
         End Try
     End Sub
     Private Sub dataArrived(ByVal arrivalCallback As IAsyncResult)
-        Dim bytesReceived, cPL As Integer
+        Dim bytesReceived, curPLength As Integer
         Dim dataPack As String
+        Dim packetProcessor As New asyncPacketHandler(AddressOf handleCurrentPacket)
 
         Try
             bytesReceived = userSocket.EndReceive(arrivalCallback) '// Stop the callback and get the bytes received
@@ -62,7 +60,7 @@ Public Class clsHoloUSER
             Return
         End Try
 
-        dataPack = filterPacket(Encoding.ASCII.GetString(byteDataGroup, 0, bytesReceived)) '// Convert the byte group to a string
+        dataPack = filterPacket(Encoding.ASCII.GetString(dataBuffer, 0, bytesReceived)) '// Convert the byte group to a string
 
         If dataPack.Length = 0 Then killConnection("Disconnected!") : Return
         If Not (dataPack.Substring(0, 1) = "@") Then killConnection("Invalid packet, @ missing!") : Return '// If the first char of the packet isn't a @ char, then it's invalid packet so drop the connection
@@ -71,9 +69,9 @@ Public Class clsHoloUSER
 
         '// Packets are sticked to each other in some cases, decoding the header of them will give us the lenghts of the packets inside
         Do Until dataPack.Length = 0
-            cPL = HoloENCODING.decodeB64(dataPack.Substring(1, 2))
-            currentPacket = dataPack.Substring(3, cPL) : handleCurrentPacket()
-            dataPack = dataPack.Substring(cPL + 3)
+            curPLength = HoloENCODING.decodeB64(dataPack.Substring(1, 2))
+            currentPacket = dataPack.Substring(3, curPLength) : handleCurrentPacket()
+            dataPack = dataPack.Substring(curplength + 3)
         Loop
 
         currentPacket = Nothing '// Release the space used for currentPacket string
@@ -81,7 +79,7 @@ Public Class clsHoloUSER
     End Sub
     Friend Sub transData(ByVal strData As String)
         Try
-            Console.WriteLine(">> " & strData.Replace(sysChar(13), "$13"))
+            'Console.WriteLine(">> " & strData.Replace(sysChar(13), "$13"))
             Dim dataByteGroup() As Byte = Encoding.ASCII.GetBytes(strData) '// Encode the strData to a byte group
             userSocket.BeginSend(dataByteGroup, 0, dataByteGroup.Length, SocketFlags.None, New AsyncCallback(AddressOf transDataComplete), 0)
 
@@ -99,7 +97,6 @@ Public Class clsHoloUSER
 
         End Try
     End Sub
-#End Region
     Private Sub pingUser()
         While True
             Threading.Thread.Sleep(60000) '// Wait 60 seconds
@@ -119,7 +116,7 @@ Public Class clsHoloUSER
     Private Sub handleCurrentPacket()
         'Try
 
-        Console.WriteLine("[" & classID & "]  " & currentPacket.Replace(sysChar(13), "{13}"))
+        'Console.WriteLine("[" & classID & "]  " & currentPacket.Replace(sysChar(13), "{13}"))
         Select Case currentPacket.Substring(0, 2)
 
             '// Connection
@@ -187,16 +184,34 @@ Public Class clsHoloUSER
                 refreshValuables()
 
             Case "B]" '// Get user's badges
-                processBadges()
+                refreshBadges()
 
             Case "@L" '// Process user's console
-                processConsole()
+                initConsole()
 
             Case "@Z" '// Process user's Club subscription stats + badges
-                processClub()
+                refreshClub()
 
             Case "@O" '// Update the 'lastvisit' field for user's console
-                Console_UpdateStats()
+                Dim currentFriendID, friendCount As Integer
+                Dim updatedFriendsPack As New StringBuilder
+                Dim friendIDs() As String = HoloDB.runReadArray("SELECT userid,friendid FROM messenger_friendships WHERE (userid = '" & UserID & "') OR (friendid = '" & UserID & "')", True)
+
+                For f = 0 To friendIDs.Count - 1
+                    If friendIDs(f).Split(sysChar(9))(0) = UserID.ToString Then currentFriendID = Integer.Parse(friendIDs(f).Split(sysChar(9))(1)) Else currentFriendID = Integer.Parse(friendIDs(f).Split(sysChar(9))(0))
+                    If currentFriendID > 0 Then
+                        updatedFriendsPack.Append(HoloENCODING.encodeVL64(currentFriendID))
+                        If HoloMANAGERS.hookedUsers.ContainsKey(currentFriendID) = True Then '// If the user is online
+                            updatedFriendsPack.Append(HoloMANAGERS.getUserClass(currentFriendID).userDetails.consoleMission & sysChar(2) & HoloMANAGERS.getUserHotelPosition(currentFriendID) & sysChar(2))
+                        Else
+                            Dim friendsDetails() As String = HoloDB.runReadArray("SELECT consolemission,lastvisit FROM users WHERE id = '" & currentFriendID & "' LIMIT 1")
+                            updatedFriendsPack.Append(friendsDetails(0) & sysChar(2) & "H" & friendsDetails(1) & sysChar(2))
+                        End If
+                        friendCount += 1
+                    End If
+                Next
+
+                transData("@M" & HoloENCODING.encodeVL64(friendCount) & updatedFriendsPack.ToString & sysChar(1))
                 HoloDB.runQuery("UPDATE users SET lastvisit = '" & DateTime.Now.ToString & "' WHERE id = '" & UserID & "' LIMIT 1")
 
             Case "@d" '// Change user console mission
@@ -215,25 +230,123 @@ Public Class clsHoloUSER
                 End If
 
             Case "@g" '// User asks someone as friend at Console
-                Console_FriendRequest()
+                Dim requesterName As String = currentPacket.Substring(4)
+                Dim requesterID = HoloDB.runRead("SELECT id FROM users WHERE name = '" & requesterName & "' LIMIT 1")
+                If requesterID = vbNullString Then Return '// Non-existring user
+                requesterID = Integer.Parse(requesterID)
+
+                If HoloDB.checkExists("SELECT requestid FROM messenger_friendrequests WHERE userid_to = '" & requesterID & "' AND userid_from = '" & UserID & "' LIMIT 1") = True Then Return '// Already a pending request for this friendship
+                Dim requestID As Integer = Val(HoloDB.runRead("SELECT MAX(requestid) FROM messenger_friendrequests WHERE userid_to = '" & requesterID & "'")) + 1 '// Get the next requestid in line (so they appear in correct order at login ;])
+                '// Insert the friendrequest in the table
+                HoloDB.runQuery("INSERT INTO messenger_friendrequests(userid_to,userid_from,requestid) VALUES ('" & requesterID & "','" & UserID & "','" & requestID & "')")
+
+                '// If the requested one is online, then send the 'you got new friendrequest' message
+                If HoloMANAGERS.isOnline(requesterID) = True Then HoloMANAGERS.getUserClass(requesterID).transData("BD" & HoloENCODING.encodeVL64(UserID) & userDetails.Name & sysChar(2) & sysChar(1))
 
             Case "@e" '// User accepts a friendrequest on the Console
-                Console_FriendAccept()
+                Dim cntAcceptedRequests As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2)) '// Get the count of accepted requests (yes decoding whole string will give us the value of the first encoded in row ;]
+                Dim requesterIDs(200) As Integer '// Create a static array with max member count 200 so users can't accept more than 200 users at a time (popular much?)
+
+                currentPacket = currentPacket.Substring(2 + HoloENCODING.encodeVL64(cntAcceptedRequests).Length) '// Get the length of the encoded count of accepted ones, and cut it off the packet together with the header, so we don't include that part in our encoding/decoding cycle all the time
+                For x = 0 To cntAcceptedRequests - 1 '// Start a loop to get all IDs the user wants to accept
+                    If currentPacket.Length = 0 Then Return '// Probably a junior scripter tried to fook the encoding, quit! (if you want to be mean put killConnection() there ;])
+                    requesterIDs(x) = HoloENCODING.decodeVL64(currentPacket) '// Get the next ID in row by decoding the remaining packet (yes, decoding the whole row will give us the value of the first encoded ID in row ;])
+                    currentPacket = currentPacket.Substring(HoloENCODING.encodeVL64(requesterIDs(x)).Length) '// Encode the found ID which you just decoded, to and check the length of it's encoded variant, and cut that piece off the remaining packet
+                Next '// Attempt to get the next one
+
+                '// Users own details (create a pre-made packet ;D)
+                Dim myImAddedPack As String = "BI" & HoloENCODING.encodeVL64(UserID) & userDetails.Name & sysChar(2) & "I" & HoloDB.runRead("SELECT consolemission FROM users WHERE id = '" & UserID & "' LIMIT 1") & sysChar(2) & HoloMANAGERS.getUserHotelPosition(UserID) & sysChar(2) & DateTime.Now.ToString & sysChar(2) & userDetails.Figure & sysChar(2) & sysChar(1)
+                Dim myCompletionPack As New StringBuilder '// Pack for the user itself with the new content for it's friendlist =]
+
+                For x = 0 To cntAcceptedRequests - 1 '// Process all accepted ones
+                    If Not (HoloDB.runRead("SELECT requestid FROM messenger_friendrequests WHERE userid_to = '" & UserID & "' AND userid_from = '" & requesterIDs(x) & "' LIMIT 1") = vbNullString) Then
+                        HoloDB.runQuery("INSERT INTO messenger_friendships(userid,friendid) VALUES ('" & requesterIDs(x) & "','" & UserID & "')") '// If there's really a friend request between the user and this requester, then insert a new friendrow in the messenger_friendships table
+                        HoloDB.runQuery("DELETE FROM messenger_friendrequests WHERE userid_to = '" & UserID & "' AND userid_from = '" & requesterIDs(x) & "'") '// Delete all pending requests between these users (sometimes there appear multiple ones) 
+                    End If
+
+                    myCompletionPack.Append("BI" & HoloENCODING.encodeVL64(requesterIDs(x)))
+                    If HoloMANAGERS.isOnline(requesterIDs(x)) = True Then
+                        Dim requesterDetails As clsHoloUSERDETAILS = HoloMANAGERS.getUserDetails(requesterIDs(x))
+                        myCompletionPack.Append(requesterDetails.Name & sysChar(2) & "I" & requesterDetails.consoleMission & sysChar(2) & HoloMANAGERS.getUserHotelPosition(requesterIDs(x)) & sysChar(2) & DateTime.Now.ToString & sysChar(2) & requesterDetails.Figure & sysChar(2) & sysChar(1))
+                        requesterDetails.userClass.transData(myImAddedPack)
+                    Else
+                        Dim requesterDetails() As String = HoloDB.runReadArray("SELECT name,figure,consolemission,lastvisit FROM users WHERE id = '" & requesterIDs(x) & "' LIMIT 1")
+                        myCompletionPack.Append(requesterDetails(0) & sysChar(2) & "I" & requesterDetails(2) & sysChar(2) & "H" & sysChar(2) & requesterDetails(3) & sysChar(2) & requesterDetails(1) & sysChar(2) & sysChar(1))
+                    End If
+
+                    myCompletionPack.Append("D{" & sysChar(2) & "H" & sysChar(1))
+                Next x
+
+                transData(myCompletionPack.ToString)
 
             Case "@f" '// User declines a friendrequest on the Console
-                Console_FriendDecline()
+                Dim cntDeclinedRequests As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2)) '// Get the count of declined requests (yes decoding whole string will give us the value of the first encoded in row ;]
+                Dim declinerIDs(200) As Integer '// Create a static array with max member count 200 so users can't decline more than 200 users at a time (popular much?)
+
+                currentPacket = currentPacket.Substring(2 + HoloENCODING.encodeVL64(cntDeclinedRequests).Length) '// Get the length of the encoded count of declined ones, and cut it off the packet together with the header, so we don't include that part in our encoding/decoding cycle all the time
+                For x = 0 To cntDeclinedRequests - 1 '// Start a loop to get all IDs the user wants to decline
+                    If currentPacket.Length = 0 Then Return '// Probably a junior scripter tried to fook the encoding, quit! (if you want to be mean put killConnection() there ;])
+                    declinerIDs(x) = HoloENCODING.decodeVL64(currentPacket) '// Get the next ID in row by decoding the remaining packet (yes, decoding the whole row will give us the value of the first encoded ID in row ;])
+                    currentPacket = currentPacket.Substring(HoloENCODING.encodeVL64(declinerIDs(x)).Length) '// Encode the found ID which you just decoded, to and check the length of it's encoded variant, and cut that piece off the remaining packet
+                Next '// Attempt to get the next one
+
+                For x = 0 To cntDeclinedRequests - 1 '// Attempt to delete declined requests between this user and his requesters
+                    HoloDB.runQuery("DELETE FROM messenger_friendrequests WHERE userid_to = '" & UserID & "' AND userid_from = '" & declinerIDs(x) & "' LIMIT 1")
+                Next
 
             Case "@h" '// User deletes (a) friend(s) on the Console
-                Console_FriendDelete()
+                Dim toDeleteID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(3)) '// Get the ID of the friend the user wants to delete
+                transData("BJI" & HoloENCODING.encodeVL64(toDeleteID) & sysChar(1)) '// Send a packet to the user which removes the friend from his list in the console
+                If HoloDB.checkExists("SELECT userid FROM messenger_friendships WHERE (userid = '" & UserID & "' AND friendid = '" & toDeleteID & "') OR (userid = '" & toDeleteID & "' AND friendid = '" & UserID & "') LIMIT 1") = True Then '// If there's a friendship between those users
+                    If HoloMANAGERS.isOnline(toDeleteID) Then HoloMANAGERS.getUserClass(toDeleteID).transData("BJI" & HoloENCODING.encodeVL64(UserID) & sysChar(1)) '// If the deleted friend is online, then send a packet that removes the user from his list
+
+                    HoloDB.runQuery("DELETE FROM messenger_friendships WHERE (userid = '" & UserID & "' AND friendid = '" & toDeleteID & "') OR (userid = '" & toDeleteID & "' AND friendid = '" & UserID & "') LIMIT 1") '// Update the messenger_friendships table
+                    HoloDB.runQuery("DELETE FROM messenger_messages WHERE (userid = '" & UserID & "' AND friendid = '" & toDeleteID & "') OR (userid = '" & toDeleteID & "' AND friendid = '" & UserID & "') LIMIT 1") '// Update the messenger_messages table; delete all pending messages between those users
+                End If
 
             Case "@a" '// User sends (a) message(s) on the Console
-                Console_SendMessage()
+                Dim cntReceivers As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2)) '// Get the count of receivers for this message
+                Dim receiverIDs(200) As Integer '// Create a static array with max member count 200 so users can't send a message to more than 200 users at once
+
+                currentPacket = currentPacket.Substring(2 + HoloENCODING.encodeVL64(cntReceivers).Length) '// Get the length of the encoded count of receivers, and cut it off the packet together with the header, so we don't include that part in our encoding/decoding cycle all the time
+                For x = 0 To cntReceivers - 1 '// Start a loop to get all IDs the user wants to send the message to
+                    receiverIDs(x) = HoloENCODING.decodeVL64(currentPacket) '// Get the next ID in row by decoding the remaining packet (yes, decoding the whole row will give us the value of the first encoded ID in row ;])
+                    currentPacket = currentPacket.Substring(HoloENCODING.encodeVL64(receiverIDs(x)).Length) '// Encode the found ID which you just decoded, to and check the length of it's encoded variant, and cut that piece off the remaining packet
+                Next '// Attempt to get the next one
+
+                Dim messageText As String = currentPacket.Substring(2) '// Get the message itself which is left over in the packet after retrieving the IDs
+                Dim messageTimeStamp As String = DateTime.Now.ToString '// Get the current date+time so all messages are 'sent at same time'
+                Dim messagePlaceHolderStamp As String = "holo.pmaster.newmail_ph=" & mainHoloWINDOWS.rndVal(1, 1250) & "-" & mainHoloWINDOWS.rndVal(150, 1150) '// Create a fully random placeholder for this message, so we don't insert the full message in the database all the time but we just set a placeholder and use UPDATE later =]
+
+                '// Insert the messages in the database
+                Dim receiversMessageCount As Integer
+                For m = 0 To cntReceivers - 1 '// Attempt to send the message to all receivers the user wanted
+                    If HoloDB.checkExists("SELECT userid FROM messenger_friendships WHERE (userid = '" & UserID & "' AND friendid = '" & receiverIDs(m) & "') OR (userid = '" & receiverIDs(m) & "' AND friendid = '" & UserID & "') LIMIT 1") = True Then '// If there is a friendship between those two users (so random packet senders: stop here)
+                        receiversMessageCount = Val(HoloDB.runRead("SELECT MAX(messageid) FROM messenger_messages WHERE userid = '" & receiverIDs(m) & "'")) + 1 '// Get the users new message count
+                        If HoloMANAGERS.isOnline(receiverIDs(m)) = True Then HoloMANAGERS.getUserClass(receiverIDs(m)).transData("BF" & HoloENCODING.encodeVL64(receiversMessageCount) & HoloENCODING.encodeVL64(UserID) & messageTimeStamp & sysChar(2) & messageText & sysChar(2) & sysChar(1)) '// If the receiver is online, then send him the new message
+                        HoloDB.runQuery("INSERT INTO messenger_messages(userid,friendid,messageid,sent_on,message) VALUES ('" & receiverIDs(m) & "','" & UserID & "','" & receiversMessageCount & "','" & messageTimeStamp & "','" & messagePlaceHolderStamp & "')") '// Insert this a place holder message + additional message data in the database
+                    End If
+                Next
+
+                HoloDB.runQuery("UPDATE messenger_messages SET message = '" & HoloDB.fixChars(messageText) & "' WHERE message = '" & messagePlaceHolderStamp & "' LIMIT " & cntReceivers) '// Update the database, replacing all the current placeholder fields with a char-fixed (') copy of the message, this way we don't have to perform xx big message queries all the time
 
             Case "@`" '// User deletes (a) message(s) on the Console
-                Console_DeleteMessage()
+                Dim messageToDeleteID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2)) '// Get the ID of the message the user wants to delete
+                HoloDB.runQuery("DELETE FROM messenger_messages WHERE userid = '" & UserID & "' AND messageid = '" & messageToDeleteID & "' LIMIT 1") '// Delete the message from the database
 
             Case "DF" '// User 'stalks' a friend 
-                Console_FriendFollow()
+                Dim friendToStalkID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2))
+                If HoloDB.checkExists("SELECT userid FROM messenger_friendships WHERE (userid = '" & UserID & "' AND friendid = '" & friendToStalkID & "') OR (userid = '" & friendToStalkID & "' AND friendid = '" & UserID & "') LIMIT 1") = False Then transData("E]H" & sysChar(1)) : Return
+                If HoloMANAGERS.isOnline(friendToStalkID) = True Then
+                    Dim friendToStalkDetails As clsHoloUSERDETAILS = HoloMANAGERS.getUserDetails(friendToStalkID)
+                    If friendToStalkDetails.roomID > 0 Then
+                        transData("D^H" & HoloENCODING.encodeVL64(friendToStalkDetails.roomID) & sysChar(1))
+                    Else
+                        transData("E]J" & sysChar(1))
+                    End If
+                Else
+                    transData("E]I" & sysChar(1))
+                End If
 
             Case "BV" '// User performs something on the Navigator (browsing etc)
                 handleNavigatorAction()
@@ -280,23 +393,97 @@ Public Class clsHoloUSER
             Case "DH" '// User refreshes recommended rooms section
                 handleNavigatorAction_RecRooms()
 
-            Case "BA" '// User enters a voucher
-                checkVoucher()
+            Case "BA" '// User tries to redeem a Credit voucher
+                Dim voucherCode As String = currentPacket.Substring(4)
+                Dim voucherAmount As Integer = Val(HoloDB.runRead("SELECT credits FROM vouchers WHERE voucher = '" & voucherCode & "' LIMIT 1"))
+                If voucherAmount > 0 Then
+                    Dim newCredits As Integer = Integer.Parse(HoloDB.runRead("SELECT credits FROM users WHERE id = '" & UserID & "' LIMIT 1")) + voucherAmount
+                    transData("CT" & sysChar(1) & "@F" & newCredits & ".0" & sysChar(1))
+                    HoloDB.runQuery("DELETE FROM vouchers WHERE voucher = '" & voucherCode & "' LIMIT 1")
+                    HoloDB.runQuery("UPDATE users SET credits = '" & newCredits & "' WHERE id = '" & UserID & "' LIMIT 1")
+                Else
+                    transData("CU1" & sysChar(1))
+                End If
 
             Case "@Q" '// User searches a guestroom
-                searchRoom()
+                Dim searchQuery As String = currentPacket.Substring(2)
+                Dim matchingRooms() As String = HoloDB.runReadArray("SELECT id,name,owner,descr,state,showname,incnt_now,incnt_max FROM guestrooms WHERE owner = '" & searchQuery & "' OR name LIKE '%" & searchQuery & "%' ORDER BY id ASC LIMIT 15", True)
+                If matchingRooms.Count > 0 Then
+                    Dim searchResult As New StringBuilder("@w")
+                    For r = 0 To matchingRooms.Count - 1
+                        Dim roomData() As String = matchingRooms(r).Split(sysChar(9))
+                        If roomData(5) = "0" Then If Not (roomData(2) = userDetails.Name) And HoloRANK(userDetails.Rank).containsRight("fuse_enter_locked_rooms") = False Then roomData(2) = "-"
+                        searchResult.Append(roomData(0) & sysChar(9) & roomData(1) & sysChar(9) & roomData(2) & sysChar(9) & HoloMISC.getRoomState(roomData(4)) & sysChar(9) & "x" & sysChar(9) & roomData(6) & sysChar(9) & roomData(7) & sysChar(9) & "null" & sysChar(9) & roomData(3) & sysChar(9) & sysChar(13))
+                    Next
+                    transData(searchResult.ToString & sysChar(1))
+                Else
+                    transData("@z" & sysChar(1))
+                End If
 
             Case "@P" '// User views his/her own rooms
-                seeMyRooms()
+                Dim myRooms() As String = HoloDB.runReadArray("SELECT id,name,descr,state,showname,incnt_now,incnt_max FROM guestrooms WHERE owner = '" & userDetails.Name & "' ORDER BY id ASC", True)
+                If myRooms.Count > 0 Then
+                    Dim myRoomPack As New StringBuilder("@P")
+                    For r = 0 To myRooms.Count - 1
+                        Dim roomData() As String = myRooms(r).Split(sysChar(9))
+                        myRoomPack.Append(roomData(0) & sysChar(9) & roomData(1) & sysChar(9) & userDetails.Name & sysChar(9) & HoloMISC.getRoomState(roomData(3)) & sysChar(9) & "x" & sysChar(9) & roomData(5) & sysChar(9) & roomData(6) & sysChar(9) & "null" & sysChar(9) & roomData(2) & sysChar(9) & sysChar(13))
+                    Next
+
+                    transData(myRoomPack.ToString & sysChar(1))
+                Else
+                    transData("@y" & userDetails.Name & sysChar(1))
+                End If
 
             Case "@R" '// User initializes his/her favourite rooms
-                Favourites_Init()
+                Dim myFavs() As String = HoloDB.runReadArray("SELECT roomid FROM nav_favrooms WHERE userid = '" & UserID & "' ORDER BY ispublicroom LIMIT 30", True)
+                Dim myFavTypes() As String = HoloDB.runReadArray("SELECT ispublicroom FROM nav_favrooms WHERE userid = '" & UserID & "' ORDER by ispublicroom LIMIT 30", True)
+                Dim deletedFavCount As Integer
+                Dim roomPack As New StringBuilder
+
+                For f = 0 To myFavs.Count - 1
+                    If myFavTypes(f) = 1 Then '// This fav is a publicroom
+                        Dim roomData() As String = HoloDB.runReadArray("SELECT name_cct,name_caption,name_icon,incnt_now,incnt_max FROM publicrooms WHERE id = '" & myFavs(f) & "' LIMIT 1")
+                        If roomData.Count = 0 Then '// Non-existing room
+                            deletedFavCount += 1
+                            HoloDB.runQuery("DELETE FROM nav_favrooms WHERE userid = '" & UserID & "' AND roomid = '" & myFavs(f) & "' AND ispublicroom = '1' LIMIT 1") '// Remove this favourite room from users list
+                        Else '// Room exists, add it's details
+                            roomPack.Append(HoloENCODING.encodeVL64(myFavs(f)) & "I" & roomData(1) & sysChar(2) & HoloENCODING.encodeVL64(roomData(3)) & HoloENCODING.encodeVL64(roomData(4)) & "I" & roomData(2) & sysChar(2) & HoloENCODING.encodeVL64(myFavs(f)) & "H" & roomData(0) & sysChar(2) & "IH")
+                        End If
+                    Else '// This fav is a guestroom
+                        Dim roomData() As String = HoloDB.runReadArray("SELECT name,owner,descr,state,showname,incnt_now,incnt_max FROM guestrooms WHERE id = '" & myFavs(f) & "' LIMIT 1")
+                        If roomData.Count = 0 Then '// Non-existing room
+                            deletedFavCount += 1
+                            HoloDB.runQuery("DELETE FROM nav_favrooms WHERE userid = '" & UserID & "' AND roomid = '" & myFavs(f) & "' AND ispublicroom = '0' LIMIT 1") '// Remove this favourite room from users list
+                        Else '// Room exists, add it's details
+                            roomPack.Append(HoloENCODING.encodeVL64(myFavs(f)) & roomData(0) & sysChar(2) & roomData(1) & sysChar(2) & HoloMISC.getRoomState(roomData(3)) & sysChar(2) & HoloENCODING.encodeVL64(roomData(5)) & HoloENCODING.encodeVL64(roomData(6)) & roomData(2) & sysChar(2))
+                        End If
+                    End If
+                Next
+
+                transData("@}HHJ" & sysChar(2) & "HHH" & HoloENCODING.encodeVL64(myFavs.Count - deletedFavCount) & roomPack.ToString & sysChar(1))
 
             Case "@S" '// User adds a room to his/her favourite rooms
-                Favourites_AddRoom()
+                Dim isPub As Byte = HoloENCODING.decodeVL64(currentPacket.Substring(2, 1)) '// Check if the user adds a guestroom or a publicroom
+                Dim roomID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(3)) '// Get the ID of the room the user wants to add
+
+                If HoloDB.checkExists("SELECT userid FROM nav_favrooms WHERE userid = '" & UserID & "' AND roomid = '" & roomID & "' AND ispublicroom = '" & isPub & "' LIMIT 1") = True Then Return '// Already added
+
+                If isPub = 1 Then '// User adds publicroom
+                    If HoloDB.checkExists("SELECT id FROM publicrooms WHERE id = '" & roomID & "' LIMIT 1") = False Then Return '// This publicroom was not found, stop here
+                Else '// User adds a guestroom
+                    If HoloDB.checkExists("SELECT id FROM guestrooms WHERE id = '" & roomID & "' LIMIT 1") = False Then Return '// This guestroom was not found, stop here
+                End If
+
+                If Integer.Parse(HoloDB.runRead("SELECT COUNT(*) FROM nav_favrooms WHERE userid = '" & UserID & "' LIMIT 1")) >= 30 Then '// The user already has 30 favourite rooms! (or even more for some reason)
+                    transData("@a" & "nav_error_toomanyfavrooms" & sysChar(1)) '// Send the message that the users list is full (external_texts)
+                Else
+                    HoloDB.runQuery("INSERT INTO nav_favrooms(userid,roomid,ispublicroom) VALUES ('" & UserID & "','" & roomID & "','" & isPub & "')") '// Insert this favourite in the database
+                End If
 
             Case "@T" '// User removes a room from his/her favourite rooms
-                Favourites_DeleteRoom()
+                Dim isPub As Byte = HoloENCODING.decodeVL64(currentPacket.Substring(2, 1)) '// Check if the user deletes a guestroom or a publicroom
+                Dim toDeleteID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(3)) '// Get the ID of the room the user wants to delete
+                HoloDB.runQuery("DELETE FROM nav_favrooms WHERE userid = '" & UserID & "' AND roomid = '" & toDeleteID & "' AND ispublicroom = '" & isPub & "' LIMIT 1") '// Delete this favourite from the database
 
             Case "@]" '// Create guestroom - phase 1
                 roomModifier(1)
@@ -456,7 +643,6 @@ Public Class clsHoloUSER
                 'transData("Cg" & HoloENCODING.encodeVL64(0) & "BattleBall leet" & sysChar(2) & HoloENCODING.encodeVL64(1000000) & sysChar(1))
                 'End If
 
-
             Case "AO" '// User looks to something (rotate body + head)
                 If userDetails.containsStatus("sit") = True Then Return
                 Dim ToX As Integer = currentPacket.Substring(2).Split(" ")(0)
@@ -504,7 +690,7 @@ Public Class clsHoloUSER
                 HoloDB.runQuery("UPDATE users SET badgestatus = '" & badgeEnabled & "," & pBadge & "' WHERE id = '" & UserID & "' LIMIT 1")
 
             Case "@t", "@x", "@w" '// User speaks/shouts/whispers
-                Room_Talk()
+                createTalk()
 
             Case "D}" '// Show 'talking...' speech bubble
                 roomCommunicator.sendAll("Ei" & HoloENCODING.encodeVL64(userDetails.roomUID) & "I" & sysChar(1))
@@ -905,6 +1091,8 @@ Public Class clsHoloUSER
 
         'End Try
     End Sub
+#End Region
+#Region "Public helpers"
     Friend Sub killConnection(Optional ByRef debugMessage As String = vbNullString)
         If killedConnection = True Then Return '// Already killed connnection
 
@@ -925,10 +1113,26 @@ Public Class clsHoloUSER
     Friend Sub Refresh()
         If IsNothing(roomCommunicator) = False Then roomCommunicator.refreshUser(userDetails)
     End Sub
-#End Region
-#Region "Client actions - all action subs"
-#Region "Badges, club & SSO actions"
-    Private Sub processBadges()
+    Friend Sub refreshClub()
+        '// Thanks to Jeax for examples in JASE, I am bad at doing stuff with dates/months w/e
+        Dim restingDays, passedMonths, restingMonths As Integer
+        Dim dbRow() As String
+
+        dbRow = HoloDB.runReadArray("SELECT months_expired,months_left,date_monthstarted FROM users_club WHERE userid = '" & UserID & "'")
+        If dbRow.Count > 0 Then '// If the user has subscribed to Club
+            passedMonths = Integer.Parse(dbRow(0)) '// Get the amount of expired months
+            restingMonths = Integer.Parse(dbRow(1)) - 1 '// Get the amount of resting months and manipulate this count just for correct packet
+            restingDays = (DateTime.Parse(dbRow(2))).Subtract(DateTime.Now).TotalDays + 31 '// Get the amount of resting days
+            If userDetails.Rank = 1 Then '// If user is normal user and club, but hasn't received the club rank
+                HoloDB.runQuery("UPDATE users SET rank = '2' WHERE id = '" & UserID & "' LIMIT 1") '// Update rank in database
+                userDetails.Rank = 2
+            End If
+            userDetails.clubMember = True
+        End If
+
+        transData("@Gclub_habbo" & sysChar(2) & HoloENCODING.encodeVL64(restingDays) & HoloENCODING.encodeVL64(passedMonths) & HoloENCODING.encodeVL64(restingMonths) & "I" & sysChar(1))
+    End Sub
+    Friend Sub refreshBadges()
         Dim b, activeBadgeSlot As Integer
         Dim myBadges(), myBadgeStatus() As String
 
@@ -949,7 +1153,73 @@ Public Class clsHoloUSER
             transData("CeHH" & sysChar(1))
         End If
     End Sub
-    Private Sub processConsole()
+    Friend Sub refreshAppearance(ByVal reloadFromDB As Boolean)
+        If reloadFromDB = True Then
+            Dim userData() As String = HoloDB.runReadArray("SELECT figure,sex,mission FROM users WHERE id = '" & UserID & "' LIMIT 1")
+            userDetails.Figure = userData(0)
+            userDetails.Sex = Char.Parse(userData(1))
+            userDetails.Mission = userData(2)
+        End If
+        transData("@E" & classID & sysChar(2) & userDetails.Name & sysChar(2) & userDetails.Figure & sysChar(2) & userDetails.Sex & sysChar(2) & userDetails.Mission & sysChar(2) & "Hch=s02/253,146,160" & sysChar(2) & "HI" & sysChar(1))
+        If IsNothing(roomCommunicator) = False Then roomCommunicator.sendAll("DJ" & HoloENCODING.encodeVL64(userDetails.roomUID) & userDetails.Figure & sysChar(2) & userDetails.Sex & sysChar(2) & userDetails.Mission & sysChar(2) & sysChar(1)) '// Poof and refresh users look in room [only if the user is in room, thus the roomCommunicator is not nulled]
+    End Sub
+    Friend Sub refreshValuables()
+        Dim userData() As String = HoloDB.runReadArray("SELECT credits,tickets FROM users WHERE id = '" & UserID & "' LIMIT 1")
+        transData("@F" & userData(0) & sysChar(1) & "A|" & userData(1) & sysChar(1))
+    End Sub
+    Friend Sub refreshHand(ByVal strMode As String)
+        Dim startID, stopID As Integer
+        Dim itemIDs() As String = HoloDB.runReadArray("SELECT id FROM furniture WHERE inhand = '" & UserID & "'", True)
+        Dim handPack As New StringBuilder("BL")
+
+        stopID = itemIDs.Count
+        Select Case strMode '// If strMode is 'update', then it doesn't do anything here and the current pagenumber will stay the same, which is what we want :D
+            Case "next"
+                curHandPage += 1
+            Case "prev"
+                curHandPage -= 1
+            Case "last"
+                curHandPage = (stopID - 1) / 9
+            Case "new"
+                curHandPage = 0
+        End Select
+
+        If itemIDs.Count > 0 Then
+reCount:
+            startID = curHandPage * 9
+            If stopID > (startID + 9) Then stopID = startID + 9
+            If (startID > stopID) Or (startID = stopID) Then curHandPage -= 1 : GoTo reCount
+
+            For i = startID To stopID - 1
+                Dim templateID As Integer = HoloDB.runRead("SELECT tid FROM furniture WHERE id = '" & itemIDs(i) & "' LIMIT 1")
+                Dim recycleFlag As Byte = 1 '// If the 'is-recycle-able' icon should blink up (will do Recycler later, it's easy + I've made it before) } Nillus
+                handPack.Append("SI" & sysChar(30) & itemIDs(i) & sysChar(30) & i & sysChar(30))
+                If HoloITEM(templateID).typeID = 0 Then handPack.Append("I") Else handPack.Append("S")
+                handPack.Append(sysChar(30) & itemIDs(i) & sysChar(30) & HoloITEM(templateID).cctName & sysChar(30))
+                If HoloITEM(templateID).typeID > 0 Then handPack.Append(HoloITEM(templateID).Length & sysChar(30) & HoloITEM(templateID).Width & sysChar(30) & HoloDB.runRead("SELECT opt_var FROM furniture WHERE id = '" & itemIDs(i) & "' LIMIT 1") & sysChar(30))
+                handPack.Append(HoloITEM(templateID).Colour & sysChar(30) & recycleFlag & sysChar(30) & "/")
+                'SEEMS NOT NEEDED, HOWEVER REAL HABBO SENDS IT :(...} If HoloITEM(templateID).typeID > 0 Then handPack.Append(HoloITEM(templateID).cctName & sysChar(30))
+                'handPack.Append("/")
+            Next
+        End If
+        handPack.Append(sysChar(13) & itemIDs.Count & sysChar(1))
+        transData(handPack.ToString)
+
+        'MsgBox(handPack.ToString.Replace(sysChar(30), "{}"))
+        '// DEBUG! :D
+        '//    '// SI+ {30} + -ID + {30} + iI + {30} + TYPE + {30} + ID + {30} + CCT + {30} + Len + {30} + Wid + {30} + VAR + {30} + COLOR + {30} + iI + {30} + CCT + {30} + "/"
+        '// Console.WriteLine(startID & " - " & stopID & " |HANDPAGE: " & curHandPage)
+    End Sub
+    Friend Sub handleBan(ByVal strMessage As String)
+        Try
+            transData("@c" & strMessage & sysChar(1))
+            killConnection("Banned [" & strMessage & "]")
+        Catch
+        End Try
+    End Sub
+#End Region
+#Region "Private helpers"
+    Private Sub initConsole()
         Dim consolePack As New StringBuilder("@L") '// Create a stringbuilder for the Console packet, so we don't have to wrestle the bigger and bigger growing packet through the memory every time. Make the packet start with @L (packet header)
 
         '// Add the users Console mission to the packet, followed by a Char 2
@@ -1026,191 +1296,6 @@ Public Class clsHoloUSER
 
         transData(consolePack.ToString) '// Send the messages
     End Sub
-    Private Sub processClub()
-        '// Thanks to Jeax for examples in JASE, I am bad at doing stuff with dates/months w/e
-        Dim restingDays, passedMonths, restingMonths As Integer
-        Dim dbRow() As String
-
-        dbRow = HoloDB.runReadArray("SELECT months_expired,months_left,date_monthstarted FROM users_club WHERE userid = '" & UserID & "'")
-        If dbRow.Count > 0 Then '// If the user has subscribed to Club
-            passedMonths = Integer.Parse(dbRow(0)) '// Get the amount of expired months
-            restingMonths = Integer.Parse(dbRow(1)) - 1 '// Get the amount of resting months and manipulate this count just for correct packet
-            restingDays = (DateTime.Parse(dbRow(2))).Subtract(DateTime.Now).TotalDays + 31 '// Get the amount of resting days
-            If userDetails.Rank = 1 Then '// If user is normal user and club, but hasn't received the club rank
-                HoloDB.runQuery("UPDATE users SET rank = '2' WHERE id = '" & UserID & "' LIMIT 1") '// Update rank in database
-                userDetails.Rank = 2
-            End If
-            userDetails.clubMember = True
-        End If
-
-        transData("@Gclub_habbo" & sysChar(2) & HoloENCODING.encodeVL64(restingDays) & HoloENCODING.encodeVL64(passedMonths) & HoloENCODING.encodeVL64(restingMonths) & "I" & sysChar(1))
-    End Sub
-    Friend Sub refreshAppearance(ByVal reloadFromDB As Boolean)
-        If reloadFromDB = True Then
-            Dim userData() As String = HoloDB.runReadArray("SELECT figure,sex,mission FROM users WHERE id = '" & UserID & "' LIMIT 1")
-            userDetails.Figure = userData(0)
-            userDetails.Sex = Char.Parse(userData(1))
-            userDetails.Mission = userData(2)
-        End If
-        transData("@E" & classID & sysChar(2) & userDetails.Name & sysChar(2) & userDetails.Figure & sysChar(2) & userDetails.Sex & sysChar(2) & userDetails.Mission & sysChar(2) & "Hch=s02/253,146,160" & sysChar(2) & "HI" & sysChar(1))
-        If IsNothing(roomCommunicator) = False Then roomCommunicator.sendAll("DJ" & HoloENCODING.encodeVL64(userDetails.roomUID) & userDetails.Figure & sysChar(2) & userDetails.Sex & sysChar(2) & userDetails.Mission & sysChar(2) & sysChar(1)) '// Poof and refresh users look in room [only if the user is in room, thus the roomCommunicator is not nulled]
-    End Sub
-    Friend Sub refreshValuables()
-        Dim userData() As String = HoloDB.runReadArray("SELECT credits,tickets FROM users WHERE id = '" & UserID & "' LIMIT 1")
-        transData("@F" & userData(0) & sysChar(1) & "A|" & userData(1) & sysChar(1))
-    End Sub
-    Friend Sub handleBan(ByVal strMessage As String)
-        Try
-            transData("@c" & strMessage & sysChar(1))
-            killConnection("Banned [" & strMessage & "]")
-        Catch
-        End Try
-    End Sub
-#End Region
-#Region "Console (messenger) actions"
-    Private Sub Console_FriendRequest()
-        Dim requesterName As String = currentPacket.Substring(4)
-        Dim requesterID = HoloDB.runRead("SELECT id FROM users WHERE name = '" & requesterName & "' LIMIT 1")
-        If requesterID = vbNullString Then Return '// Non-existring user
-        requesterID = Integer.Parse(requesterID)
-
-        If HoloDB.checkExists("SELECT requestid FROM messenger_friendrequests WHERE userid_to = '" & requesterID & "' AND userid_from = '" & UserID & "' LIMIT 1") = True Then Return '// Already a pending request for this friendship
-        Dim requestID As Integer = Val(HoloDB.runRead("SELECT MAX(requestid) FROM messenger_friendrequests WHERE userid_to = '" & requesterID & "'")) + 1 '// Get the next requestid in line (so they appear in correct order at login ;])
-        '// Insert the friendrequest in the table
-        HoloDB.runQuery("INSERT INTO messenger_friendrequests(userid_to,userid_from,requestid) VALUES ('" & requesterID & "','" & UserID & "','" & requestID & "')")
-
-        '// If the requested one is online, then send the 'you got new friendrequest' message
-        If HoloMANAGERS.isOnline(requesterID) = True Then HoloMANAGERS.getUserClass(requesterID).transData("BD" & HoloENCODING.encodeVL64(UserID) & userDetails.Name & sysChar(2) & sysChar(1))
-    End Sub
-    Private Sub Console_FriendAccept()
-        Dim cntAcceptedRequests As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2)) '// Get the count of accepted requests (yes decoding whole string will give us the value of the first encoded in row ;]
-        Dim requesterIDs(200) As Integer '// Create a static array with max member count 200 so users can't accept more than 200 users at a time (popular much?)
-
-        currentPacket = currentPacket.Substring(2 + HoloENCODING.encodeVL64(cntAcceptedRequests).Length) '// Get the length of the encoded count of accepted ones, and cut it off the packet together with the header, so we don't include that part in our encoding/decoding cycle all the time
-        For x = 0 To cntAcceptedRequests - 1 '// Start a loop to get all IDs the user wants to accept
-            If currentPacket.Length = 0 Then Return '// Probably a junior scripter tried to fook the encoding, quit! (if you want to be mean put killConnection() there ;])
-            requesterIDs(x) = HoloENCODING.decodeVL64(currentPacket) '// Get the next ID in row by decoding the remaining packet (yes, decoding the whole row will give us the value of the first encoded ID in row ;])
-            currentPacket = currentPacket.Substring(HoloENCODING.encodeVL64(requesterIDs(x)).Length) '// Encode the found ID which you just decoded, to and check the length of it's encoded variant, and cut that piece off the remaining packet
-        Next '// Attempt to get the next one
-
-        '// Users own details (create a pre-made packet ;D)
-        Dim myImAddedPack As String = "BI" & HoloENCODING.encodeVL64(UserID) & userDetails.Name & sysChar(2) & "I" & HoloDB.runRead("SELECT consolemission FROM users WHERE id = '" & UserID & "' LIMIT 1") & sysChar(2) & HoloMANAGERS.getUserHotelPosition(UserID) & sysChar(2) & DateTime.Now.ToString & sysChar(2) & userDetails.Figure & sysChar(2) & sysChar(1)
-        Dim myCompletionPack As New StringBuilder '// Pack for the user itself with the new content for it's friendlist =]
-
-        For x = 0 To cntAcceptedRequests - 1 '// Process all accepted ones
-            If Not (HoloDB.runRead("SELECT requestid FROM messenger_friendrequests WHERE userid_to = '" & UserID & "' AND userid_from = '" & requesterIDs(x) & "' LIMIT 1") = vbNullString) Then
-                HoloDB.runQuery("INSERT INTO messenger_friendships(userid,friendid) VALUES ('" & requesterIDs(x) & "','" & UserID & "')") '// If there's really a friend request between the user and this requester, then insert a new friendrow in the messenger_friendships table
-                HoloDB.runQuery("DELETE FROM messenger_friendrequests WHERE userid_to = '" & UserID & "' AND userid_from = '" & requesterIDs(x) & "'") '// Delete all pending requests between these users (sometimes there appear multiple ones) 
-            End If
-
-            myCompletionPack.Append("BI" & HoloENCODING.encodeVL64(requesterIDs(x)))
-            If HoloMANAGERS.isOnline(requesterIDs(x)) = True Then
-                Dim requesterDetails As clsHoloUSERDETAILS = HoloMANAGERS.getUserDetails(requesterIDs(x))
-                myCompletionPack.Append(requesterDetails.Name & sysChar(2) & "I" & requesterDetails.consoleMission & sysChar(2) & HoloMANAGERS.getUserHotelPosition(requesterIDs(x)) & sysChar(2) & DateTime.Now.ToString & sysChar(2) & requesterDetails.Figure & sysChar(2) & sysChar(1))
-                requesterDetails.userClass.transData(myImAddedPack)
-            Else
-                Dim requesterDetails() As String = HoloDB.runReadArray("SELECT name,figure,consolemission,lastvisit FROM users WHERE id = '" & requesterIDs(x) & "' LIMIT 1")
-                myCompletionPack.Append(requesterDetails(0) & sysChar(2) & "I" & requesterDetails(2) & sysChar(2) & "H" & sysChar(2) & requesterDetails(3) & sysChar(2) & requesterDetails(1) & sysChar(2) & sysChar(1))
-            End If
-
-            myCompletionPack.Append("D{" & sysChar(2) & "H" & sysChar(1))
-        Next x
-
-        transData(myCompletionPack.ToString)
-    End Sub
-    Private Sub Console_FriendDecline()
-        Dim cntDeclinedRequests As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2)) '// Get the count of declined requests (yes decoding whole string will give us the value of the first encoded in row ;]
-        Dim declinerIDs(200) As Integer '// Create a static array with max member count 200 so users can't decline more than 200 users at a time (popular much?)
-
-        currentPacket = currentPacket.Substring(2 + HoloENCODING.encodeVL64(cntDeclinedRequests).Length) '// Get the length of the encoded count of declined ones, and cut it off the packet together with the header, so we don't include that part in our encoding/decoding cycle all the time
-        For x = 0 To cntDeclinedRequests - 1 '// Start a loop to get all IDs the user wants to decline
-            If currentPacket.Length = 0 Then Return '// Probably a junior scripter tried to fook the encoding, quit! (if you want to be mean put killConnection() there ;])
-            declinerIDs(x) = HoloENCODING.decodeVL64(currentPacket) '// Get the next ID in row by decoding the remaining packet (yes, decoding the whole row will give us the value of the first encoded ID in row ;])
-            currentPacket = currentPacket.Substring(HoloENCODING.encodeVL64(declinerIDs(x)).Length) '// Encode the found ID which you just decoded, to and check the length of it's encoded variant, and cut that piece off the remaining packet
-        Next '// Attempt to get the next one
-
-        For x = 0 To cntDeclinedRequests - 1 '// Attempt to delete declined requests between this user and his requesters
-            HoloDB.runQuery("DELETE FROM messenger_friendrequests WHERE userid_to = '" & UserID & "' AND userid_from = '" & declinerIDs(x) & "' LIMIT 1")
-        Next
-    End Sub
-    Private Sub Console_FriendDelete()
-        Dim toDeleteID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(3)) '// Get the ID of the friend the user wants to delete
-        transData("BJI" & HoloENCODING.encodeVL64(toDeleteID) & sysChar(1)) '// Send a packet to the user which removes the friend from his list in the console
-        If HoloDB.checkExists("SELECT userid FROM messenger_friendships WHERE (userid = '" & UserID & "' AND friendid = '" & toDeleteID & "') OR (userid = '" & toDeleteID & "' AND friendid = '" & UserID & "') LIMIT 1") = True Then '// If there's a friendship between those users
-            If HoloMANAGERS.isOnline(toDeleteID) Then HoloMANAGERS.getUserClass(toDeleteID).transData("BJI" & HoloENCODING.encodeVL64(UserID) & sysChar(1)) '// If the deleted friend is online, then send a packet that removes the user from his list
-
-            HoloDB.runQuery("DELETE FROM messenger_friendships WHERE (userid = '" & UserID & "' AND friendid = '" & toDeleteID & "') OR (userid = '" & toDeleteID & "' AND friendid = '" & UserID & "') LIMIT 1") '// Update the messenger_friendships table
-            HoloDB.runQuery("DELETE FROM messenger_messages WHERE (userid = '" & UserID & "' AND friendid = '" & toDeleteID & "') OR (userid = '" & toDeleteID & "' AND friendid = '" & UserID & "') LIMIT 1") '// Update the messenger_messages table; delete all pending messages between those users
-        End If
-    End Sub
-    Private Sub Console_SendMessage()
-        Dim cntReceivers As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2)) '// Get the count of receivers for this message
-        Dim receiverIDs(200) As Integer '// Create a static array with max member count 200 so users can't send a message to more than 200 users at once
-
-        currentPacket = currentPacket.Substring(2 + HoloENCODING.encodeVL64(cntReceivers).Length) '// Get the length of the encoded count of receivers, and cut it off the packet together with the header, so we don't include that part in our encoding/decoding cycle all the time
-        For x = 0 To cntReceivers - 1 '// Start a loop to get all IDs the user wants to send the message to
-            receiverIDs(x) = HoloENCODING.decodeVL64(currentPacket) '// Get the next ID in row by decoding the remaining packet (yes, decoding the whole row will give us the value of the first encoded ID in row ;])
-            currentPacket = currentPacket.Substring(HoloENCODING.encodeVL64(receiverIDs(x)).Length) '// Encode the found ID which you just decoded, to and check the length of it's encoded variant, and cut that piece off the remaining packet
-        Next '// Attempt to get the next one
-
-        Dim messageText As String = currentPacket.Substring(2) '// Get the message itself which is left over in the packet after retrieving the IDs
-        Dim messageTimeStamp As String = DateTime.Now.ToString '// Get the current date+time so all messages are 'sent at same time'
-        Dim messagePlaceHolderStamp As String = "holo.pmaster.newmail_ph=" & mainHoloWINDOWS.rndVal(1, 1250) & "-" & mainHoloWINDOWS.rndVal(150, 1150) '// Create a fully random placeholder for this message, so we don't insert the full message in the database all the time but we just set a placeholder and use UPDATE later =]
-
-        '// Insert the messages in the database
-        Dim receiversMessageCount As Integer
-        For m = 0 To cntReceivers - 1 '// Attempt to send the message to all receivers the user wanted
-            If HoloDB.checkExists("SELECT userid FROM messenger_friendships WHERE (userid = '" & UserID & "' AND friendid = '" & receiverIDs(m) & "') OR (userid = '" & receiverIDs(m) & "' AND friendid = '" & UserID & "') LIMIT 1") = True Then '// If there is a friendship between those two users (so random packet senders: stop here)
-                receiversMessageCount = Val(HoloDB.runRead("SELECT MAX(messageid) FROM messenger_messages WHERE userid = '" & receiverIDs(m) & "'")) + 1 '// Get the users new message count
-                If HoloMANAGERS.isOnline(receiverIDs(m)) = True Then HoloMANAGERS.getUserClass(receiverIDs(m)).transData("BF" & HoloENCODING.encodeVL64(receiversMessageCount) & HoloENCODING.encodeVL64(UserID) & messageTimeStamp & sysChar(2) & messageText & sysChar(2) & sysChar(1)) '// If the receiver is online, then send him the new message
-                HoloDB.runQuery("INSERT INTO messenger_messages(userid,friendid,messageid,sent_on,message) VALUES ('" & receiverIDs(m) & "','" & UserID & "','" & receiversMessageCount & "','" & messageTimeStamp & "','" & messagePlaceHolderStamp & "')") '// Insert this a place holder message + additional message data in the database
-            End If
-        Next
-
-        HoloDB.runQuery("UPDATE messenger_messages SET message = '" & HoloDB.fixChars(messageText) & "' WHERE message = '" & messagePlaceHolderStamp & "' LIMIT " & cntReceivers) '// Update the database, replacing all the current placeholder fields with a char-fixed (') copy of the message, this way we don't have to perform xx big message queries all the time
-    End Sub
-    Private Sub Console_DeleteMessage()
-        Dim messageToDeleteID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2)) '// Get the ID of the message the user wants to delete
-        HoloDB.runQuery("DELETE FROM messenger_messages WHERE userid = '" & UserID & "' AND messageid = '" & messageToDeleteID & "' LIMIT 1") '// Delete the message from the database
-    End Sub
-    Private Sub Console_FriendFollow()
-        Dim friendToStalkID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2))
-        If HoloDB.checkExists("SELECT userid FROM messenger_friendships WHERE (userid = '" & UserID & "' AND friendid = '" & friendToStalkID & "') OR (userid = '" & friendToStalkID & "' AND friendid = '" & UserID & "') LIMIT 1") = False Then transData("E]H" & sysChar(1)) : Return
-        If HoloMANAGERS.isOnline(friendToStalkID) = True Then
-            Dim friendToStalkDetails As clsHoloUSERDETAILS = HoloMANAGERS.getUserDetails(friendToStalkID)
-            If friendToStalkDetails.roomID > 0 Then
-                transData("D^H" & HoloENCODING.encodeVL64(friendToStalkDetails.roomID) & sysChar(1))
-            Else
-                transData("E]J" & sysChar(1))
-            End If
-        Else
-            transData("E]I" & sysChar(1))
-        End If
-    End Sub
-    Private Sub Console_UpdateStats()
-        Dim currentFriendID, friendCount As Integer
-        Dim updatedFriendsPack As New StringBuilder
-        Dim friendIDs() As String = HoloDB.runReadArray("SELECT userid,friendid FROM messenger_friendships WHERE (userid = '" & UserID & "') OR (friendid = '" & UserID & "')", True)
-
-        On Error Resume Next
-        For f = 0 To friendIDs.Count - 1
-            If friendIDs(f).Split(sysChar(9))(0) = UserID.ToString Then currentFriendID = Integer.Parse(friendIDs(f).Split(sysChar(9))(1)) Else currentFriendID = Integer.Parse(friendIDs(f).Split(sysChar(9))(0))
-            If currentFriendID > 0 Then
-                updatedFriendsPack.Append(HoloENCODING.encodeVL64(currentFriendID))
-                If HoloMANAGERS.hookedUsers.ContainsKey(currentFriendID) = True Then '// If the user is online
-                    updatedFriendsPack.Append(HoloMANAGERS.getUserClass(currentFriendID).userDetails.consoleMission & sysChar(2) & HoloMANAGERS.getUserHotelPosition(currentFriendID) & sysChar(2))
-                Else
-                    Dim friendsDetails() As String = HoloDB.runReadArray("SELECT consolemission,lastvisit FROM users WHERE id = '" & currentFriendID & "' LIMIT 1")
-                    updatedFriendsPack.Append(friendsDetails(0) & sysChar(2) & "H" & friendsDetails(1) & sysChar(2))
-                End If
-                friendCount += 1
-            End If
-        Next
-
-        transData("@M" & HoloENCODING.encodeVL64(friendCount) & updatedFriendsPack.ToString & sysChar(1))
-    End Sub
-#End Region
-#Region "Hotel Navigator actions"
     Private Sub handleNavigatorAction()
         Dim catID As String = HoloENCODING.decodeVL64(currentPacket.Substring(3)) '// Get the ID of the part the user wants to see
         Dim hideFullRooms As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2, 1))
@@ -1288,47 +1373,6 @@ reGrabID:
 
         End Try
     End Sub
-    Private Sub searchRoom()
-        Dim searchQuery As String = currentPacket.Substring(2)
-        Dim matchingRooms() As String = HoloDB.runReadArray("SELECT id,name,owner,descr,state,showname,incnt_now,incnt_max FROM guestrooms WHERE owner = '" & searchQuery & "' OR name LIKE '%" & searchQuery & "%' ORDER BY id ASC LIMIT 15", True)
-        If matchingRooms.Count > 0 Then
-            Dim searchResult As New StringBuilder("@w")
-            For r = 0 To matchingRooms.Count - 1
-                Dim roomData() As String = matchingRooms(r).Split(sysChar(9))
-                If roomData(5) = "0" Then If Not (roomData(2) = userDetails.Name) And HoloRANK(userDetails.Rank).containsRight("fuse_enter_locked_rooms") = False Then roomData(2) = "-"
-                searchResult.Append(roomData(0) & sysChar(9) & roomData(1) & sysChar(9) & roomData(2) & sysChar(9) & HoloMISC.getRoomState(roomData(4)) & sysChar(9) & "x" & sysChar(9) & roomData(6) & sysChar(9) & roomData(7) & sysChar(9) & "null" & sysChar(9) & roomData(3) & sysChar(9) & sysChar(13))
-            Next
-            transData(searchResult.ToString & sysChar(1))
-        Else
-            transData("@z" & sysChar(1))
-        End If
-    End Sub
-    Private Sub seeMyRooms()
-        Dim myRooms() As String = HoloDB.runReadArray("SELECT id,name,descr,state,showname,incnt_now,incnt_max FROM guestrooms WHERE owner = '" & userDetails.Name & "' ORDER BY id ASC", True)
-        If myRooms.Count > 0 Then
-            Dim myRoomPack As New StringBuilder("@P")
-            For r = 0 To myRooms.Count - 1
-                Dim roomData() As String = myRooms(r).Split(sysChar(9))
-                myRoomPack.Append(roomData(0) & sysChar(9) & roomData(1) & sysChar(9) & userDetails.Name & sysChar(9) & HoloMISC.getRoomState(roomData(3)) & sysChar(9) & "x" & sysChar(9) & roomData(5) & sysChar(9) & roomData(6) & sysChar(9) & "null" & sysChar(9) & roomData(2) & sysChar(9) & sysChar(13))
-            Next
-
-            transData(myRoomPack.ToString & sysChar(1))
-        Else
-            transData("@y" & userDetails.Name & sysChar(1))
-        End If
-    End Sub
-    Private Sub checkVoucher()
-        Dim voucherCode As String = currentPacket.Substring(4)
-        Dim voucherAmount As Integer = Val(HoloDB.runRead("SELECT credits FROM vouchers WHERE voucher = '" & voucherCode & "' LIMIT 1"))
-        If voucherAmount > 0 Then
-            Dim newCredits As Integer = Integer.Parse(HoloDB.runRead("SELECT credits FROM users WHERE id = '" & UserID & "' LIMIT 1")) + voucherAmount
-            transData("CT" & sysChar(1) & "@F" & newCredits & ".0" & sysChar(1))
-            HoloDB.runQuery("DELETE FROM vouchers WHERE voucher = '" & voucherCode & "' LIMIT 1")
-            HoloDB.runQuery("UPDATE users SET credits = '" & newCredits & "' WHERE id = '" & UserID & "' LIMIT 1")
-        Else
-            transData("CU1" & sysChar(1))
-        End If
-    End Sub
     Private Sub roomModifier(ByRef actionID As Byte)
         Select Case actionID
 
@@ -1393,83 +1437,7 @@ reGrabID:
 
         End Select
     End Sub
-    Private Sub Favourites_Init()
-        Dim myFavs() As String = HoloDB.runReadArray("SELECT roomid FROM nav_favrooms WHERE userid = '" & UserID & "' ORDER BY ispublicroom LIMIT 30", True)
-        Dim myFavTypes() As String = HoloDB.runReadArray("SELECT ispublicroom FROM nav_favrooms WHERE userid = '" & UserID & "' ORDER by ispublicroom LIMIT 30", True)
-        Dim deletedFavCount As Integer
-        Dim roomPack As New StringBuilder
-
-        For f = 0 To myFavs.Count - 1
-            If myFavTypes(f) = 1 Then '// This fav is a publicroom
-                Dim roomData() As String = HoloDB.runReadArray("SELECT name_cct,name_caption,name_icon,incnt_now,incnt_max FROM publicrooms WHERE id = '" & myFavs(f) & "' LIMIT 1")
-                If roomData.Count = 0 Then '// Non-existing room
-                    deletedFavCount += 1
-                    HoloDB.runQuery("DELETE FROM nav_favrooms WHERE userid = '" & UserID & "' AND roomid = '" & myFavs(f) & "' AND ispublicroom = '1' LIMIT 1") '// Remove this favourite room from users list
-                Else '// Room exists, add it's details
-                    roomPack.Append(HoloENCODING.encodeVL64(myFavs(f)) & "I" & roomData(1) & sysChar(2) & HoloENCODING.encodeVL64(roomData(3)) & HoloENCODING.encodeVL64(roomData(4)) & "I" & roomData(2) & sysChar(2) & HoloENCODING.encodeVL64(myFavs(f)) & "H" & roomData(0) & sysChar(2) & "IH")
-                End If
-            Else '// This fav is a guestroom
-                Dim roomData() As String = HoloDB.runReadArray("SELECT name,owner,descr,state,showname,incnt_now,incnt_max FROM guestrooms WHERE id = '" & myFavs(f) & "' LIMIT 1")
-                If roomData.Count = 0 Then '// Non-existing room
-                    deletedFavCount += 1
-                    HoloDB.runQuery("DELETE FROM nav_favrooms WHERE userid = '" & UserID & "' AND roomid = '" & myFavs(f) & "' AND ispublicroom = '0' LIMIT 1") '// Remove this favourite room from users list
-                Else '// Room exists, add it's details
-                    roomPack.Append(HoloENCODING.encodeVL64(myFavs(f)) & roomData(0) & sysChar(2) & roomData(1) & sysChar(2) & HoloMISC.getRoomState(roomData(3)) & sysChar(2) & HoloENCODING.encodeVL64(roomData(5)) & HoloENCODING.encodeVL64(roomData(6)) & roomData(2) & sysChar(2))
-                End If
-            End If
-        Next
-
-        transData("@}HHJ" & sysChar(2) & "HHH" & HoloENCODING.encodeVL64(myFavs.Count - deletedFavCount) & roomPack.ToString & sysChar(1))
-    End Sub
-    Private Sub Favourites_AddRoom()
-        Dim isPub As Byte = HoloENCODING.decodeVL64(currentPacket.Substring(2, 1)) '// Check if the user adds a guestroom or a publicroom
-        Dim roomID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(3)) '// Get the ID of the room the user wants to add
-
-        If HoloDB.checkExists("SELECT userid FROM nav_favrooms WHERE userid = '" & UserID & "' AND roomid = '" & roomID & "' AND ispublicroom = '" & isPub & "' LIMIT 1") = True Then Return '// Already added
-
-        If isPub = 1 Then '// User adds publicroom
-            If HoloDB.checkExists("SELECT id FROM publicrooms WHERE id = '" & roomID & "' LIMIT 1") = False Then Return '// This publicroom was not found, stop here
-        Else '// User adds a guestroom
-            If HoloDB.checkExists("SELECT id FROM guestrooms WHERE id = '" & roomID & "' LIMIT 1") = False Then Return '// This guestroom was not found, stop here
-        End If
-
-        If Integer.Parse(HoloDB.runRead("SELECT COUNT(*) FROM nav_favrooms WHERE userid = '" & UserID & "' LIMIT 1")) >= 30 Then '// The user already has 30 favourite rooms! (or even more for some reason)
-            transData("@a" & "nav_error_toomanyfavrooms" & sysChar(1)) '// Send the message that the users list is full (external_texts)
-            Return '// Stop here
-        End If
-
-        HoloDB.runQuery("INSERT INTO nav_favrooms(userid,roomid,ispublicroom) VALUES ('" & UserID & "','" & roomID & "','" & isPub & "')") '// Insert this favourite in the database
-    End Sub
-    Private Sub Favourites_DeleteRoom()
-        Dim isPub As Byte = HoloENCODING.decodeVL64(currentPacket.Substring(2, 1)) '// Check if the user deletes a guestroom or a publicroom
-        Dim toDeleteID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(3)) '// Get the ID of the room the user wants to delete
-        HoloDB.runQuery("DELETE FROM nav_favrooms WHERE userid = '" & UserID & "' AND roomid = '" & toDeleteID & "' AND ispublicroom = '" & isPub & "' LIMIT 1") '// Delete this favourite from the database
-    End Sub
-#End Region
-#Region "Guestroom actions"
-    Private Sub GuestRoom_CheckID()
-        
-    End Sub
-    Private Sub GuestRoom_CheckState()
-
-    End Sub
-    Private Sub Room_rotateMe()
-        Dim ToX As Integer = currentPacket.Substring(2).Split(" ")(0)
-        Dim ToY As Integer = currentPacket.Split(" ")(1)
-        With userDetails
-            If .PosY > ToY Then .rotHead = 0
-            If .PosX < ToX Then .rotHead = 2
-            If .PosY < ToY Then .rotHead = 4
-            If .PosX > ToX Then .rotHead = 6
-            If .PosX < ToX And .PosY > ToY Then .rotHead = 1
-            If .PosX < ToX And .PosY < ToY Then .rotHead = 3
-            If .PosX > ToX And .PosY < ToY Then .rotHead = 5
-            If .PosX > ToX And .PosY > ToY Then .rotHead = 7
-            .rotBody = .rotHead
-        End With
-        roomCommunicator.refreshUser(userDetails)
-    End Sub
-    Private Sub Room_Talk()
+    Private Sub createTalk()
         Dim talkType As Char
         Dim talkMessage As String = currentPacket.Substring(4)
 
@@ -1509,49 +1477,6 @@ reGrabID:
             userDetails.showTalkAnimation((talkMessage.Length + 50) * 30, persnlGesture)
         End If
     End Sub
-    Private Sub refreshHand(ByVal strMode As String)
-        Dim startID, stopID As Integer
-        Dim itemIDs() As String = HoloDB.runReadArray("SELECT id FROM furniture WHERE inhand = '" & UserID & "'", True)
-        Dim handPack As New StringBuilder("BL")
-
-        stopID = itemIDs.Count
-        Select Case strMode '// If strMode is 'update', then it doesn't do anything here and the current pagenumber will stay the same, which is what we want :D
-            Case "next"
-                curHandPage += 1
-            Case "prev"
-                curHandPage -= 1
-            Case "last"
-                curHandPage = (stopID - 1) / 9
-            Case "new"
-                curHandPage = 0
-        End Select
-
-        If itemIDs.Count > 0 Then
-reCount:
-            startID = curHandPage * 9
-            If stopID > (startID + 9) Then stopID = startID + 9
-            If (startID > stopID) Or (startID = stopID) Then curHandPage -= 1 : GoTo reCount
-
-            For i = startID To stopID - 1
-                Dim templateID As Integer = HoloDB.runRead("SELECT tid FROM furniture WHERE id = '" & itemIDs(i) & "' LIMIT 1")
-                Dim recycleFlag As Byte = 1 '// If the 'is-recycle-able' icon should blink up (will do Recycler later, it's easy + I've made it before) } Nillus
-                handPack.Append("SI" & sysChar(30) & itemIDs(i) & sysChar(30) & i & sysChar(30))
-                If HoloITEM(templateID).typeID = 0 Then handPack.Append("I") Else handPack.Append("S")
-                handPack.Append(sysChar(30) & itemIDs(i) & sysChar(30) & HoloITEM(templateID).cctName & sysChar(30))
-                If HoloITEM(templateID).typeID > 0 Then handPack.Append(HoloITEM(templateID).Length & sysChar(30) & HoloITEM(templateID).Width & sysChar(30) & HoloDB.runRead("SELECT opt_var FROM furniture WHERE id = '" & itemIDs(i) & "' LIMIT 1") & sysChar(30))
-                handPack.Append(HoloITEM(templateID).Colour & sysChar(30) & recycleFlag & sysChar(30) & "/")
-                'SEEMS NOT NEEDED, HOWEVER REAL HABBO SENDS IT :(...} If HoloITEM(templateID).typeID > 0 Then handPack.Append(HoloITEM(templateID).cctName & sysChar(30))
-                'handPack.Append("/")
-            Next
-        End If
-        handPack.Append(sysChar(13) & itemIDs.Count & sysChar(1))
-        transData(handPack.ToString)
-
-        'MsgBox(handPack.ToString.Replace(sysChar(30), "{}"))
-        '// DEBUG! :D
-        '//    '// SI+ {30} + -ID + {30} + iI + {30} + TYPE + {30} + ID + {30} + CCT + {30} + Len + {30} + Wid + {30} + VAR + {30} + COLOR + {30} + iI + {30} + CCT + {30} + "/"
-        '// Console.WriteLine(startID & " - " & stopID & " |HANDPAGE: " & curHandPage)
-    End Sub
     Private Function handleSpeechCommand(ByVal talkMessage As String) As Boolean
         Dim commandPart() = talkMessage.Split(" ")
         Dim theCommand As String = commandPart(0).Substring(1)
@@ -1586,15 +1511,5 @@ reCount:
 
         Return False
     End Function
-#End Region
-#Region "Games"
-    Private Sub resetGameStatuses()
-        With userDetails
-            .Game_ID = -1
-            .Game_owns = False
-            .Game_withState = -1
-        End With
-    End Sub
-#End Region
 #End Region
 End Class
