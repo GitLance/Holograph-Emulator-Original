@@ -4,6 +4,7 @@ Public Module mainHoloAPP
     Private serverMonitor As New Thread(AddressOf monitorServer)
     Sub Main()
         Console.Title = "Holograph Emulator"
+        Console.SetWindowPosition(0, 0)
         mainHoloAPP.printHoloProps()
 
         While True
@@ -21,8 +22,7 @@ Public Module mainHoloAPP
         Console.WriteLine(" CORE: V" & My.Application.Info.Version.Major)
         Console.WriteLine(" MAJOR FUNCTIONS: LIB " & My.Application.Info.Version.Minor)
         Console.WriteLine(" REVISION: R" & My.Application.Info.Version.Revision)
-        Console.WriteLine(" CLIENT: V18")
-        Console.WriteLine(" RELEASE TYPE: TRUNK, .NET release")
+        Console.WriteLine(" CLIENT: V21")
         Console.WriteLine(vbNullString)
         If HoloRACK.gamesocket_port = 0 Then startServer()
     End Sub
@@ -39,10 +39,10 @@ Public Module mainHoloAPP
             Next
 
             Console.WriteLine("[SERVER] Starting up server for " & Environment.UserName & "...")
-            Sleep(1000)
+            Thread.Sleep(1000)
             Console.WriteLine("[SERVER] Attempting to retrieve settings from config.ini...")
             Console.WriteLine(vbNullString)
-            Sleep(350)
+            Thread.Sleep(70)
 
             '// Set the directory where config.ini should be in the settings rack
             .configFileLocation = My.Application.Info.DirectoryPath & "\bin\config.ini"
@@ -50,7 +50,7 @@ Public Module mainHoloAPP
             If My.Computer.FileSystem.FileExists(.configFileLocation) = False Then '// If the config.file in the /bin/ folder is not found
                 '// Shutdown the server because the config.ini was not found
                 Console.WriteLine("[SERVER] config.ini not found! Shutting down...")
-                Sleep(1000)
+                Thread.Sleep(1000)
                 stopServer()
             End If
 
@@ -86,7 +86,7 @@ Public Module mainHoloAPP
 
             If dbCountCheck(0) = "" Then '// If there were no fields like that in the system table = something wrong with holodb
                 Console.WriteLine("[MySQL] There is something wrong with database! Shutting down...")
-                Sleep(400)
+                Thread.Sleep(400)
                 stopServer()
             End If
 
@@ -98,22 +98,13 @@ Public Module mainHoloAPP
             '// Load the static room data (guestrooms)
             mainHoloAPP.loadRoomModels()
             Console.WriteLine("[SERVER] Loaded static guestroom data into memory.")
-            Console.WriteLine(vbNullString)
+            Thread.Sleep(100)
 
-            Sleep(400)
-
-            Dim itemTemplateCount As Integer = HoloDB.runRead("SELECT COUNT(*) FROM catalogue_items LIMIT 1")
-
+            '// Load catalogue pages + item templates
             cacheCatalogue()
 
             '// Perform some housekeeping
-            HoloDB.runQuery("UPDATE guestrooms SET incnt_now = '0'")
-            HoloDB.runQuery("UPDATE publicrooms SET incnt_now = '0'")
-
-            Console.WriteLine("[MYSQL] Room inside counts reset.")
-            HoloDB.runQuery("UPDATE users SET ticket_sso = NULL")
-            Console.WriteLine("[MYSQL] SSO login tickets nulled.")
-            Console.WriteLine(vbNullString)
+            resetDynamics()
 
             '// Display the current database counts
             Console.WriteLine("[MYSQL] Found " & dbCountCheck(0) & " users, " & dbCountCheck(1) & " guestrooms and " & dbCountCheck(2) & " furnitures.")
@@ -139,15 +130,25 @@ Public Module mainHoloAPP
             Console.WriteLine("[SERVER] Ready for connections.")
         End With
     End Sub
+    Private Sub resetDynamics()
+        HoloDB.runQuery("UPDATE system SET onlinecount = '0'")
+        HoloDB.runQuery("UPDATE users SET ticket_sso = NULL")
+        HoloDB.runQuery("UPDATE guestrooms SET incnt_now = '0'")
+        HoloDB.runQuery("UPDATE publicrooms SET incnt_now = '0'")
+
+        Console.WriteLine("[MYSQL] Online count reset.")
+        Console.WriteLine("[MYSQL] Room inside counts reset.")
+        Console.WriteLine("[MYSQL] SSO login tickets nulled.")
+        Console.WriteLine(vbNullString)
+    End Sub
     Friend Sub stopServer()
         Console.WriteLine(vbNullString)
 
         '// Stop the extra thread(s) if they are started
         If serverMonitor.IsAlive = True Then serverMonitor.Abort()
 
-        '// Set the online count to 0 and null the SSO tickets
-        HoloDB.runQuery("UPDATE system SET online_count = '0'")
-        HoloDB.runQuery("UPDATE users SET ticket_sso = NULL")
+        '// Reset some stats
+        resetDynamics()
 
         '// Close the database connection
         Console.WriteLine("[MYSQL] Closing existing database connection...")
@@ -279,7 +280,7 @@ Public Module mainHoloAPP
         If pageID > 0 Then If pageData.Count = 0 Then Return
 
         Dim pageBuilder As New System.Text.StringBuilder
-        Dim pageIndexName As String
+        Dim pageIndexName As String = vbNullString
         Dim curPageCache As New clsHoloRACK.cachedCataloguePage '// Create new instance of cached page
 
         If pageID > 0 Then '// If it's a page + items, and not just not-on-page items, then cache the page

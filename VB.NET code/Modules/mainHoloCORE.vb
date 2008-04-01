@@ -14,6 +14,7 @@ Module mainHoloCORE
 
     Public HoloBBGAMELOBBY As clsHoloBBGAMELOBBY
 
+    Public cameraTest As String
     Public Pathfinder As clsHoloPATHFINDER
     Public HoloITEM(1000) As cachedItemTemplate
     Function filterPacket(ByVal strData As String) As String

@@ -16,7 +16,7 @@ Public Class clsHoloMANAGERS
         Return Nothing
     End Function
     Function getUserHotelPosition(ByRef userID As Integer) As String
-        If hookedUsers.ContainsKey(userID) = True Then '// The user is online!
+        Try
             Dim userDetails As clsHoloUSERDETAILS = DirectCast(hookedUsers(userID), clsHoloUSER).userDetails '// Get the users class
             '// Determine the users location
             If userDetails.roomID > 0 Then '// User is in room
@@ -24,10 +24,11 @@ Public Class clsHoloMANAGERS
             Else
                 getUserHotelPosition = HoloRACK.Console_OnHotelView '// On Hotel View entry matching external_texts
             End If
+
             Return "I" & getUserHotelPosition
-        Else
+        Catch
             Return "H"
-        End If
+        End Try
     End Function
     Public Sub sendToRank(ByVal rankID As Integer, ByVal includeHigher As Boolean, ByVal strData As String)
         For Each User As clsHoloUSER In hookedUsers.Values
@@ -35,5 +36,10 @@ Public Class clsHoloMANAGERS
             If User.userDetails.Rank > rankID Then If includeHigher = False Then Continue For
             User.transData(strData)
         Next
+    End Sub
+    Public Sub updateRoomInsideCount(ByVal roomID As Integer, ByVal isPublicroom As Boolean, ByVal insideCount As Integer)
+        Dim roomType As String = vbNullString
+        If isPublicroom = True Then roomType = "publicrooms" Else roomType = "guestrooms"
+        HoloDB.runQuery("UPDATE " & roomType & " SET incnt_now = '" & insideCount & "' WHERE id = '" & roomID & "' LIMIT 1")
     End Sub
 End Class

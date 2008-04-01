@@ -1,12 +1,16 @@
 ﻿Public Class clsHoloPATHFINDER
     Private roomMap(,) As Byte
+    Private heightMap(,) As Byte
+    Private userMap(,) As Boolean
     Private maxX, maxY As Integer
 
     Private openList, closedList As clsHoloILIST
     Private startNode, goalNode As mapNode
     Private solutionList, successorList As ArrayList
-    Public Sub New(ByVal roomMap(,) As Byte)
+    Public Sub New(ByVal roomMap(,) As Byte, ByVal heightMap(,) As Byte, ByVal userMap(,) As Boolean)
         Me.roomMap = roomMap
+        Me.heightMap = heightMap
+        Me.userMap = userMap
         maxX = roomMap.GetLength(1) - 1
         maxY = roomMap.GetLength(0) - 1
 
@@ -18,7 +22,7 @@
     Public Function getNextStep(ByVal nowX As Integer, ByVal nowY As Integer, ByVal toX As Integer, ByVal toY As Integer) As Integer()
         If nowX = toX And nowY = toY Then Return Nothing
 
-        Dim maxCycles As Integer = maxX * maxY
+        Dim maxCycles As Integer = (maxX * maxY)
         Dim cntCycles As Integer = 0
 
         goalNode = New mapNode(toX, toY, 0.0, Nothing, Nothing, Me) '// Create a 'goalnode'
@@ -63,13 +67,20 @@
         Dim nextStep(2) As Integer
         Dim nextStepNode As mapNode = solutionList(1)
         nextStep(0) = nextStepNode.X : nextStep(1) = nextStepNode.Y
-        nextStep(2) = getRotation(nowX, nowY, nextStepNode.X, nextStepNode.Y)
+        nextStep(2) = calcRotation(nowX, nowY, nextStepNode.X, nextStepNode.Y)
         Return nextStep
     End Function
-    Public Function getSqState(ByVal X As Integer, ByVal Y As Integer) As Byte
+    Private Function getSqState(ByVal X As Integer, ByVal Y As Integer) As Byte
         Try
             If roomMap(X, Y) = 2 Then Return 0
             Return roomMap(X, Y)
+        Catch
+            Return 0
+        End Try
+    End Function
+    Private Function getSqHeight(ByVal X As Integer, ByVal Y As Integer) As Integer
+        Try
+            Return heightMap(X, Y) + 1
         Catch
             Return 0
         End Try
@@ -136,25 +147,59 @@
             If parentPather.getSqState(X - 1, Y - 0) > 0 Then If parentPather.getSqState(X - 0, Y + 0) > 0 Then addSuccessor(X - 1, Y + 1)
         End Sub
         Private Sub addSuccessor(ByVal X As Integer, ByVal Y As Integer)
-            Dim currentCost As Integer = parentPather.getSqState(X, Y) - 1
-            If currentCost = -1 Then Return
-            Dim newNode As mapNode = New mapNode(X, Y, Me.Cost + currentCost, Me, goalNode, parentPather)
-            Successors.Add(newNode)
+            Try
+                If parentPather.userMap(X, Y) = True Then Return
+                Dim currentCost As Integer = parentPather.getSqState(X, Y) - 1
+                If currentCost = -1 Then Return
+
+                Dim oHeight As Integer = parentPather.getSqHeight(Me.X, Me.Y) - 1
+                Dim nHeight As Integer = parentPather.getSqHeight(X, Y) - 1
+
+                For i = -1 To 1
+                    If oHeight = nHeight - i Then
+                        Dim newNode As mapNode = New mapNode(X, Y, Me.Cost + currentCost, Me, goalNode, parentPather)
+                        Successors.Add(newNode)
+                        Return
+                    End If
+                Next
+            Catch
+                Return
+            End Try
         End Sub
         Private Sub reCalc()
             If IsNothing(goalNode) = True Then
                 goalEstimate = 0
             Else
+                '// Formula 1
                 Dim xD As Double = X - goalNode.X
                 Dim yD As Double = Y - goalNode.Y
                 goalEstimate = Math.Sqrt((xD ^ 2) + (yD ^ 2))
+
+                '// Formula 2
+                'goalEstimate = 2 * (Math.Max(Math.Abs(X - goalNode.X), Math.Abs(Y - goalNode.Y))) '// Zigzag ftw
+
+                '// Formula 3
+                'Dim pX As Double = Math.Abs(goalNode.X - X)
+                'Dim pY As Double = Math.Abs(goalNode.Y - Y)
+                'Dim oH As Double = Math.Abs(pX - pY)
+                'Dim dH As Double = Math.Abs((pX + pY - oH) / 2)
+                'goalEstimate = 2 * (dH + oH + pX + pY)
+
+                '// Formula 4 [sucks!]
+                'goalEstimate = Math.Sqrt((X - goalNode.X) ^ 2) + ((Y - goalNode.X) ^ 2)
+
+                '// Formula 5 
+                'Dim hD As Integer = Math.Min(Math.Abs(X - goalNode.X), Math.Abs(Y - goalNode.Y))
+                'Dim hS As Integer = Math.Abs(X - goalNode.X) + Math.Abs(Y - goalNode.Y)
+                'goalEstimate = 4 + hD + 2 + (hS - 2 * hD)
+
             End If
         End Sub
         Function CompareTo(ByVal obj As Object) As Integer Implements IComparable.CompareTo
             Return -totalCost.CompareTo(DirectCast(obj, mapNode).totalCost)
         End Function
     End Class
-    Private Function getRotation(ByVal X1 As Integer, ByVal Y1 As Integer, ByVal X2 As Integer, ByVal Y2 As Integer) As Integer
+    Private Function calcRotation(ByVal X1 As Integer, ByVal Y1 As Integer, ByVal X2 As Integer, ByVal Y2 As Integer) As Integer
         Dim vRtx As Integer
         If X1 > X2 And Y1 > Y2 Then
             vRtx = 7

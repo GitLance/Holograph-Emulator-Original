@@ -25,11 +25,16 @@ Public Class clsHoloUSERDETAILS
     Friend PosH As Double
     Friend DestX As Integer
     Friend DestY As Integer
+    Friend walkLock As Boolean
     '// Actions
     Friend rotBody As Integer
     Friend rotHead As Integer
-
     Private carrydItem As String
+    '// Trading
+    Friend tradePartnerUID As Integer
+    Friend tradeAccept As Boolean
+    Friend tradeItems(100) As Integer '// People who trade more have aids
+    Friend tradeItemCount As Integer
     '// Games
     Friend inBBLobby As Boolean '// User is in BattleBall lobby yes/no
     Friend Game_owns As Boolean '// User owns a BattleBall game atm
@@ -58,7 +63,14 @@ Public Class clsHoloUSERDETAILS
         DestY = -1
         rotBody = 0
         rotHead = 0
+        walkLock = False
         carrydItem = vbNullString
+
+        tradePartnerUID = 0
+        tradeItems = New Integer(100) {}
+        tradeItemCount = 0
+        tradeAccept = False
+
         inBBLobby = False
         Game_owns = False
         Game_ID = -1
@@ -69,18 +81,6 @@ Public Class clsHoloUSERDETAILS
     End Sub
 #End Region
 #Region "Status management"
-    Friend Function containsStatus(ByVal actionKey As String) As Boolean
-        Return Statuses.Contains(actionKey)
-    End Function
-    Friend Function getStatuses() As String
-        Dim actionKey, myStatuses As String
-        For Each actionKey In Statuses.Keys
-            myStatuses += actionKey
-            If Not (Statuses(actionKey) = vbNullString) Then myStatuses += " " & Statuses(actionKey)
-            myStatuses += "/"
-        Next
-        Return myStatuses
-    End Function
     Friend Sub addStatus(ByVal actionKey As String, ByVal actionValue As String)
         If Statuses.ContainsKey(actionKey) Then Statuses.Remove(actionKey)
         Statuses.Add(actionKey, actionValue)
@@ -88,6 +88,11 @@ Public Class clsHoloUSERDETAILS
     Friend Sub removeStatus(ByVal actionKey As String)
         If Statuses.ContainsKey(actionKey) Then Statuses.Remove(actionKey)
     End Sub
+    Friend ReadOnly Property containsStatus(ByVal actionKey As String) As Boolean
+        Get
+            Return Statuses.Contains(actionKey)
+        End Get
+    End Property
     Private Sub carryItemLoop()
         For i = 1 To 5 '// Edit this to ya wishes
             addStatus("carryd", carrydItem) '// Start carrying this item
@@ -135,6 +140,7 @@ Public Class clsHoloUSERDETAILS
             If Not (itemToCarry = "Water" Or itemToCarry = "Milk" Or itemToCarry = "Juice") Then Return '// If it's not a numeric item, but also not a drink you can get in the Infobus, then it's a kid without a life. Stop here kthx
         End If
         dropItem()
+        removeStatus("dance")
         carrydItem = itemToCarry
         itemCarrier = New Thread(AddressOf carryItemLoop)
         itemCarrier.Priority = ThreadPriority.Lowest
@@ -172,6 +178,17 @@ Public Class clsHoloUSERDETAILS
             Return detailsStack
         End Get
     End Property
+    Friend ReadOnly Property dynamicStatus() As String
+        Get
+            Dim myStatuses As String = vbNullString
+            For Each actionKey As String In Statuses.Keys
+                myStatuses += actionKey
+                If Not (Statuses(actionKey) = vbNullString) Then myStatuses += " " & Statuses(actionKey)
+                myStatuses += "/"
+            Next
+            Return roomUID & " " & PosX & "," & PosY & "," & PosH & "," & rotHead & "," & rotBody & "/" & myStatuses
+        End Get
+    End Property
     Private Sub handleStatus(ByVal actionKey As String, ByVal actionValue As String, ByVal actionLength As Integer)
         If Statuses.ContainsKey(actionKey) Then Return
         Statuses.Add(actionKey, actionValue)
@@ -180,11 +197,60 @@ Public Class clsHoloUSERDETAILS
         Statuses.Remove(actionKey)
         userClass.Refresh() '// Send updated @b packet again, but now the /ACTIONKEY/ is removed
     End Sub
-    Public Sub dropItem()
+    Friend Sub dropItem()
         On Error Resume Next
         If itemCarrier.IsAlive = True Then itemCarrier.Abort()
         Statuses.Remove("carryd")
         Statuses.Remove("drink")
     End Sub
+    Friend Sub refreshTradeBoxes()
+        Dim partnerClass As clsHoloUSERDETAILS = userClass.roomCommunicator.roomUserDetails(tradePartnerUID)
+        If IsNothing(partnerClass) Then Return
+
+        Dim refreshPack As New System.Text.StringBuilder("Al" & Name & sysChar(9) & tradeAccept.ToString.ToLower & sysChar(9))
+        If tradeItemCount > 0 Then refreshPack.Append(createItemList(tradeItems))
+        refreshPack.Append(sysChar(13) & partnerClass.Name & sysChar(9) & partnerClass.tradeAccept.ToString.ToLower & sysChar(9))
+        If partnerClass.tradeItemCount > 0 Then refreshPack.Append(createItemList(partnerClass.tradeItems))
+        refreshPack.Append(sysChar(1))
+        userClass.transData(refreshPack.ToString)
+    End Sub
+    Friend Sub abortTrade()
+        Dim partnerClass As clsHoloUSERDETAILS = userClass.roomCommunicator.roomUserDetails(tradePartnerUID)
+        If IsNothing(partnerClass) Then Return
+
+        '// Reset this user [the one who cancels the trade or finishes it]
+        tradePartnerUID = -1
+        tradeAccept = False
+        tradeItems = New Integer(100) {}
+        tradeItemCount = 0
+        removeStatus("trd")
+        Me.userClass.transData("An" & sysChar(1))
+
+        '// Reset the other trade partner
+        partnerClass.tradePartnerUID = -1
+        partnerClass.tradeAccept = False
+        partnerClass.tradeItems = New Integer(100) {}
+        partnerClass.tradeItemCount = 0
+        partnerClass.removeStatus("trd")
+        partnerClass.userClass.transData("An" & sysChar(1))
+
+        '// Refresh the room status so the buttons appear again
+        Me.userClass.Refresh()
+        partnerClass.userClass.Refresh()
+    End Sub
+    Private Function createItemList(ByVal itemIDs() As Integer) As String
+        Dim itemList As New System.Text.StringBuilder
+        For i = 0 To itemIDs.Count - 1
+            If itemIDs(i) = 0 Then Continue For '// Empty slot
+            Dim templateID As Integer = HoloDB.runRead("SELECT tid FROM furniture WHERE id = '" & itemIDs(i) & "' LIMIT 1")
+
+            itemList.Append("SI" & sysChar(30) & itemIDs(i) & sysChar(30) & i & sysChar(30))
+            If HoloITEM(templateID).typeID = 0 Then itemList.Append("I") Else itemList.Append("S")
+            itemList.Append(sysChar(30) & itemIDs(i) & sysChar(30) & HoloITEM(templateID).cctName & sysChar(30))
+            If HoloITEM(templateID).typeID > 0 Then itemList.Append(HoloITEM(templateID).Length & sysChar(30) & HoloITEM(templateID).Width & sysChar(30) & HoloDB.runRead("SELECT opt_var FROM furniture WHERE id = '" & itemIDs(i) & "' LIMIT 1") & sysChar(30))
+            itemList.Append(HoloITEM(templateID).Colour & sysChar(30) & i & sysChar(30) & "/")
+        Next
+        Return itemList.ToString
+    End Function
 #End Region
 End Class

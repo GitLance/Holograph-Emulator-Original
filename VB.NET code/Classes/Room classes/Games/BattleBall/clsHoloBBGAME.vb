@@ -100,7 +100,7 @@ Public Class clsHoloBBGAME
 
         For TT = 0 To teamCount - 1
             For Each arenaAspirant As clsHoloUSERDETAILS In teamMembers(TT).Values
-                HoloBBGAMELOBBY.parentRoom.leaveUser(arenaAspirant)
+                HoloBBGAMELOBBY.parentRoom.removeUser(arenaAspirant, True)
                 arenaAspirant.roomID = Integer.Parse(9 & mapID)
                 arenaAspirant.Game_withState = -5
                 arenaAspirant.userClass.transData(gameMap)

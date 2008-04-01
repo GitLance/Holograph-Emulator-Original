@@ -82,10 +82,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="VB.NET code\Classes\Core classes\Connections\clsHoloDB.vb" />
-    <Compile Include="VB.NET code\Classes\Core classes\clsHoloILIST.vb" />
+    <Compile Include="VB.NET code\Classes\Other classes\clsHoloILIST.vb" />
     <Compile Include="VB.NET code\Classes\Core classes\clsHoloMISC.vb" />
     <Compile Include="VB.NET code\Classes\Core classes\clsHoloRACK.vb" />
     <Compile Include="VB.NET code\Classes\Core classes\Connections\clsHoloMUSMGR.vb" />
+    <Compile Include="VB.NET code\Classes\Other classes\clsOstack.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\clsHoloROOM.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\Games\BattleBall\clsHoloBBGAMELOBBY.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\Games\BattleBall\clsHoloBBGAME.vb" />
@@ -170,9 +171,6 @@
       <WrapperTool>primary</WrapperTool>
       <Isolated>False</Isolated>
     </COMReference>
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="VB.NET code\Classes\Other classes\" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.VisualBasic.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 

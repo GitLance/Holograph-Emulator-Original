@@ -17,7 +17,6 @@ Public Class clsHoloBBGAMELOBBY
 
         Dim gameID As Integer
         Dim newGame As New clsHoloBBGAME
-
         gameSettings = gameSettings.Substring(HoloENCODING.decodeB64(gameSettings.Substring(4, 2)) + 7)
 
         newGame.mapID = HoloENCODING.decodeVL64(gameSettings)

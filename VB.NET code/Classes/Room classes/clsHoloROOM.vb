@@ -12,11 +12,11 @@ Public Class clsHoloROOM
 
     Private ocState(,) As Byte '// Typestate on X,Y0 = blocked, 1 = open, 2 = seat, 3 = bed, 4 = rug
     Private ocItemRot(,) As Byte '// Rotation of the item on X,Y (only set with seat/bed)
-    Private ocHeight(,) As Byte '// Height on X,Y, -1 = blocked
-    Private ocSitHeight(,) As Double '// Sitheight on X,Y
+    Private ocHeight(,) As Byte '// Walkeight on X,Y, 255 = blocked by user
+    Private ocItemHeight(,) As Double '// Itemheight on X,Y
     Private ocUserHere(,) As Boolean '// User here true/false
 
-    Private doorX, doorY As Integer
+    Friend doorX, doorY As Integer
     Private doorH As Double
 
     Private roomUsers As New Hashtable
@@ -52,16 +52,21 @@ Public Class clsHoloROOM
         ocState = New Byte(maxX, maxY) {}
         ocItemRot = New Byte(maxX, maxY) {}
         ocHeight = New Byte(maxX, maxY) {}
-        ocSitHeight = New Double(maxX, maxY) {}
+        ocItemHeight = New Double(maxX, maxY) {}
         ocUserHere = New Boolean(maxX, maxY) {}
 
         For Y = 0 To maxY - 1
             For X = 0 To maxX
-                Dim curSq As String = tempHeightMap(Y).Substring(X, 1).ToLower
-                If Not (curSq = "x") Then
-                    ocState(X, Y) = 1 '// Set this X,Y to walkable/open
-                    ocHeight(X, Y) = Byte.Parse(curSq) '// Parse the current square height of X,Y
-                End If
+                Dim curSq As String = tempHeightMap(Y).Substring(X, 1).Trim.ToLower
+                Select Case curSq
+                    Case "x", vbNullString '// Blocked
+                    Case "o" '// Unblockable [no afro blocking here and aids is done kthx]
+                        ocState(X, Y) = 1
+                        '// Special unblockable bool herreeeee
+                    Case Else '// Walkable
+                        ocState(X, Y) = 1 '// Set this X,Y to walkable/open
+                        ocHeight(X, Y) = Byte.Parse(curSq) '// Parse the current square height of X,Y
+                End Select
             Next
         Next
 
@@ -80,7 +85,7 @@ Public Class clsHoloROOM
                 ElseIf itemT = 2 Then '// Seat! =D
                     ocState(itemX, itemY) = 2
                     ocItemRot(itemX, itemY) = curItemStats(5)
-                    ocSitHeight(itemX, itemY) = 1.0
+                    ocItemHeight(itemX, itemY) = 1.0
                 End If
 
                 tempCompletedItemMap.Append(curItemStats(0) & " " & curItemStats(1) & " " & curItemStats(2) & " " & curItemStats(3) & " " & curItemStats(4) & " " & curItemStats(5) & sysChar(13))
@@ -108,7 +113,7 @@ Public Class clsHoloROOM
                         For tY = newItem.Y To newItem.Y + iLength - 1
                             If HoloITEM(newItem.tID).typeID = 2 Then
                                 ocState(tX, tY) = 2
-                                ocSitHeight(tX, tY) = ocHeight(tX, tY) + HoloITEM(newItem.tID).topH
+                                ocItemHeight(tX, tY) = ocHeight(tX, tY) + HoloITEM(newItem.tID).topH
                                 ocItemRot(tX, tY) = newItem.Z
                             Else
                                 ocState(tX, tY) = 0
@@ -116,9 +121,10 @@ Public Class clsHoloROOM
                         Next tY
                     Next tX
                 End If
-
             Next
         End If
+
+        ocState(doorX, doorY) = 1 '// Make the door always walkable
 
         Console.WriteLine("[ROOM] Room " & roomID & " [publicroom: " & isPublicRoom.ToString.ToLower & "] loaded.")
     End Sub
@@ -135,7 +141,8 @@ Public Class clsHoloROOM
     Private Sub manageWalks()
         While True
             '
-            For Each ruD As clsHoloUSERDETAILS In roomUsers.Values
+            Dim syncStack As New StringBuilder '// No start value because this thread keeps running during the whole lifetime of the room
+            For Each ruD As clsHoloUSERDETAILS In DirectCast(roomUsers.Clone, Hashtable).Values
                 If ruD.DestX = -1 Then Continue For
 
                 Dim jieksMap(,) As Byte
@@ -147,7 +154,7 @@ Public Class clsHoloROOM
                 Catch
                 End Try
 
-                Dim Jieks As New clsHoloPATHFINDER(jieksMap)
+                Dim Jieks As New clsHoloPATHFINDER(jieksMap, ocHeight, ocUserHere)
                 Dim nextCoords() As Integer = Jieks.getNextStep(ruD.PosX, ruD.PosY, ruD.DestX, ruD.DestY)
 
                 ruD.removeStatus("mv")
@@ -155,7 +162,7 @@ Public Class clsHoloROOM
                 If IsNothing(nextCoords) = True Then
                     If ocState(ruD.PosX, ruD.PosY) = 2 Then '// Seat reached
                         ruD.removeStatus("dance")
-                        ruD.addStatus("sit", ocSitHeight(ruD.PosX, ruD.PosY))
+                        ruD.addStatus("sit", ocItemHeight(ruD.PosX, ruD.PosY))
                         ruD.rotHead = ocItemRot(ruD.PosX, ruD.PosY)
                         ruD.DestX = -1
                     End If
@@ -166,10 +173,11 @@ Public Class clsHoloROOM
                 End If
                 ruD.rotBody = ruD.rotHead
 
-                refreshUser(ruD)
+                syncStack.Append(ruD.dynamicStatus & sysChar(13))
 
                 If IsNothing(nextCoords) Then
                     ruD.DestX = -1
+                    If ruD.walkLock = True Then removeUser(ruD, True) : Continue For '// User has clicked the door and no more coords where found, so who knows and he might be in the door now?!
                 Else
                     ocUserHere(ruD.PosX, ruD.PosY) = False
                     ruD.PosX = nextCoords(0)
@@ -178,6 +186,10 @@ Public Class clsHoloROOM
                     ocUserHere(ruD.PosX, ruD.PosY) = True
                 End If
             Next
+            If Not (syncStack.Length = 0) Then
+                syncStack.Append(sysChar(1))
+                sendAll("@b" & syncStack.ToString)
+            End If
             Thread.Sleep(455)
             '
         End While
@@ -190,7 +202,6 @@ Public Class clsHoloROOM
                 Return publicRoomHeightmap
             Else
                 Return HoloSTATICMODEL(roomModel).strMap
-
             End If
         End Get
     End Property
@@ -202,6 +213,15 @@ Public Class clsHoloROOM
             Next
 
             Return userPack.ToString
+        End Get
+    End Property
+    Friend ReadOnly Property insideUsersDynamics() As String
+        Get
+            Dim refreshPack As New StringBuilder()
+            For Each roomUser As clsHoloUSERDETAILS In roomUsers.Values
+                refreshPack.Append(roomUser.dynamicStatus & sysChar(13))
+            Next
+            Return refreshPack.ToString
         End Get
     End Property
     Friend ReadOnly Property Items() As String
@@ -249,6 +269,17 @@ Public Class clsHoloROOM
             End If
         End Get
     End Property
+    Friend ReadOnly Property Votes(ByVal userID As Integer) As String
+        Get
+            If userID = 0 OrElse HoloDB.checkExists("SELECT userid FROM guestroom_votes WHERE userid = '" & userID & "' AND roomid = '" & roomID & "' LIMIT 1") = True Then
+                Dim voteSum As Integer = HoloDB.runRead("SELECT SUM(vote) FROM guestroom_votes WHERE roomid = '" & roomID & "'")
+                If voteSum < 1 Then voteSum = 0
+                Return HoloENCODING.encodeVL64(voteSum)
+            Else
+                Return "M" '// Return a -1 in VL64, so the Thumb up/down buttons appear
+            End If
+        End Get
+    End Property
     Friend ReadOnly Property whosInHereList() As String
         Get
             Dim listBuilder As New StringBuilder(HoloENCODING.encodeVL64(roomID) & HoloENCODING.encodeVL64(roomUsers.Count))
@@ -260,9 +291,10 @@ Public Class clsHoloROOM
     End Property
 #End Region
 #Region "User management"
-    Friend Sub enterUser(ByRef newUser As clsHoloUSERDETAILS)
-        If newUser.isAllowedInRoom = False Then newUser.userClass.transData("@R" & sysChar(1)) : Return
+    Friend Sub addUser(ByRef newUser As clsHoloUSERDETAILS)
+        If newUser.isAllowedInRoom = False Then newUser.userClass.roomCommunicator = Nothing : newUser.Reset() : newUser.userClass.transData("@R" & sysChar(1)) : Return '// How in hells name did you got here? You haven't been autorised! Gtfo! Tubgirl!!11
 
+        If roomUsers.Count = 0 Then walkManager.Start()
         If roomUsers.ContainsValue(newUser) = False Then
             Dim i As Integer
             While (True)
@@ -273,6 +305,8 @@ Public Class clsHoloROOM
                 End If
                 i += 1
             End While
+            '// Add to the list with names
+            roomUsersByName.Add(newUser.Name, newUser)
         End If
 
         '// Set user's position matching the door of this room
@@ -282,97 +316,82 @@ Public Class clsHoloROOM
 
         sendAll("@\" & newUser.ToString & sysChar(1)) '// Make user appear in room
 
-        '// Get & send the entering user the full statuses of the inside users, so they appear with dancing, fucking, waving or w/e
-        Dim refreshPack As New StringBuilder("@b")
-        For Each roomUser As clsHoloUSERDETAILS In roomUsers.Values
-            With roomUser
-                refreshPack.Append(.roomUID & " " & .PosX & "," & .PosY & "," & .PosH & "," & .rotHead & "," & .rotBody & "/" & roomUser.getStatuses & "/" & sysChar(13))
-            End With
-        Next
-        refreshPack.Append(sysChar(1))
-        newUser.userClass.transData(refreshPack.ToString)
 
         '// Update room inside count
-        Dim roomType As String = "guestrooms"
-        If isPublicRoom = True Then roomType = "publicrooms"
-        HoloDB.runQuery("UPDATE " & roomType & " SET incnt_now = '" & roomUsers.Count & "' WHERE id = '" & roomID & "' LIMIT 1")
-
-        If walkManager.IsAlive = False Then walkManager.Start()
+        HoloMANAGERS.updateRoomInsideCount(roomID, isPublicRoom, roomUsers.Count)
     End Sub
-    Friend Sub leaveUser(ByVal leavingUser As clsHoloUSERDETAILS)
+    Friend Sub removeUser(ByVal leavingUser As clsHoloUSERDETAILS, ByVal sendKick As Boolean, Optional ByVal kickMessage As String = vbNullString)
+        If sendKick = True Then leavingUser.userClass.transData("@R" & sysChar(1))
+        If Not (kickMessage = vbNullString) Then leavingUser.userClass.transData("@amod_warn/" & kickMessage & sysChar(1))
+
         If roomUsers.Count > 1 Then '// If there are more than just this user in the room
-            Dim roomType As String = "guestrooms"
-
-            leavingUser.userClass.Room_noRoom(False, True)
-
-            sendAll("@]" & leavingUser.roomUID & sysChar(1)) '// Send the 'make user disappear' packet to the room
-            roomUsers.Remove(leavingUser.roomUID) '// Remove this class
+            roomUsers.Remove(leavingUser.roomUID)
+            roomUsersByName.Remove(leavingUser.Name)
             ocUserHere(leavingUser.PosX, leavingUser.PosY) = False
 
-            If isPublicRoom = True Then roomType = "publicrooms"
-            HoloDB.runQuery("UPDATE " & roomType & " SET incnt_now = '" & roomUsers.Count & "' WHERE id = '" & roomID & "' LIMIT 1")
+            sendAll("@]" & leavingUser.roomUID & sysChar(1)) '// Send the 'make user disappear' packet to the room
+            HoloMANAGERS.updateRoomInsideCount(roomID, isPublicRoom, roomUsers.Count) '// Update the inside count
         Else '// Last user leaves the room, start destroying this class
-            destroyRoom()
+            HoloMANAGERS.updateRoomInsideCount(roomID, isPublicRoom, 0)
+
+            HoloMANAGERS.hookedRooms.Remove(roomID) '// Remove roomclass from hashtable
+            Console.WriteLine("[ROOM] Room " & roomID & " [publicroom: " & isPublicRoom.ToString.ToLower & "] was left by last user, resources destroyed.")
+            walkManager.Abort()
         End If
+
+        leavingUser.Reset()
+        leavingUser.userClass.roomCommunicator = Nothing
     End Sub
-    Sub destroyRoom()
-        On Error Resume Next
-        Dim roomType As String
-        If isPublicRoom = True Then roomType = "publicrooms" Else roomType = "guestrooms"
-
-        HoloDB.runQuery("UPDATE " & roomType & " SET incnt_now = '0' WHERE id = '" & roomID & "' LIMIT 1")
-
-        If walkManager.IsAlive = True Then walkManager.Abort()
-        furnitureItems.Clear()
-        furnitureItems = Nothing
-
-        HoloMANAGERS.hookedRooms.Remove(roomID) '// Remove roomclass from hashtable
-        Me.Finalize() '// Destroy this class
-        GC.Collect() '// Destroy any floating data that isn't needed anymore
-
-        Console.WriteLine("[ROOM] Room " & roomID & " [publicroom: " & isPublicRoom.ToString.ToLower & "] was left by last user, resources destroyed.")
-    End Sub
-    Friend Sub refreshSpot(ByVal posX As Integer, ByVal posY As Integer)
+    Private Sub refreshSpot(ByVal posX As Integer, ByVal posY As Integer)
         For Each roomUserDetails As clsHoloUSERDETAILS In roomUsers.Values
             If roomUserDetails.PosX = posX And roomUserDetails.PosY = posY Then
-                With roomUserDetails
-                    sendAll("@b" & .roomUID & " " & posX & "," & posY & "," & .PosH & "," & .rotHead & "," & .rotBody & "/" & .getStatuses & sysChar(1))
-                End With
+                roomUserDetails.removeStatus("sit")
+                If ocState(posX, posY) = 2 Then '// Still a seaty, update sitheight + rotation
+                    roomUserDetails.addStatus("sit", ocItemHeight(posX, posY))
+                    roomUserDetails.rotHead = ocItemRot(posX, posY)
+                    roomUserDetails.rotBody = ocItemRot(posX, posY)
+                End If
+                sendAll("@b" & roomUserDetails.dynamicStatus & sysChar(1))
                 Return
             End If
         Next
     End Sub
     Friend Sub refreshUser(ByRef userDetails As clsHoloUSERDETAILS)
-        With userDetails
-            sendAll("@b" & .roomUID & " " & .PosX & "," & .PosY & "," & .PosH & "," & .rotHead & "," & .rotBody & "/" & .getStatuses & sysChar(1))
-        End With
+        sendAll("@b" & userDetails.dynamicStatus & sysChar(1))
     End Sub
     Friend Sub kickUser(ByVal kickTarget As String, ByVal myRank As Integer, Optional ByVal kickReason As String = vbNullString)
         If roomUsersByName.ContainsKey(kickTarget) = False Then Return
         Dim kickUser As clsHoloUSERDETAILS = roomUsersByName(kickTarget)
+
         If kickUser.isOwner = True Then If HoloRANK(myRank).containsRight("fuse_any_room_controller") = False Then Return '// If you are trying to kick the room owner (so also staff!) and you don't have the 'fuse_any_room_controller' fuse right, then you can't kick [so: room owner can't kick staff ;P]
-        If Not (kickReason = vbNullString) Then kickUser.userClass.transData("@amod_warn/" & kickReason & sysChar(1)) '// Kicked by staffmember, send the reason
-        leaveUser(kickUser)
+        If kickReason = vbNullString Then '// Plain room kick
+            kickUser.walkLock = True
+            kickUser.DestX = doorX
+            kickUser.DestY = doorY
+        Else '// Kicked by staff
+            removeUser(kickUser, True)
+            kickUser.userClass.transData("@amod_warn/" & kickReason & sysChar(1)) '// Kicked by staffmember, send the reason
+        End If
     End Sub
     Friend Sub modRights(ByVal withUserName As String, ByVal addInsteadOfRemove As Boolean)
         Try
             If roomUsersByName.ContainsKey(withUserName) = False Then Return
-            Dim withUserDetails As clsHoloUSERDETAILS
+            Dim withUserDetails As clsHoloUSERDETAILS = roomUsersByName(withUserName)
             If addInsteadOfRemove = True Then
                 If HoloDB.checkExists("SELECT userid FROM guestroom_rights WHERE userid = '" & withUserDetails.UserID & "' AND roomid = '" & roomID & "' LIMIT 1") = True Then Return '// User already has rights
                 HoloDB.runQuery("INSERT INTO guestroom_rights (userid,roomid) VALUES ('" & withUserDetails.UserID & "','" & roomID & "')")
 
                 withUserDetails.hasRights = True
                 withUserDetails.userClass.transData("@j" & sysChar(1))
-                withUserDetails.addStatus("flatctrl ", vbNullString)
+                withUserDetails.addStatus("flatctrl", "onlyfurniture")
             Else
                 HoloDB.runQuery("DELETE FROM guestroom_rights WHERE userid = '" & withUserDetails.UserID & "' AND roomid = '" & roomID & "' LIMIT 1")
                 withUserDetails.hasRights = False
-                withUserDetails.removeStatus("flatctrl ")
+                withUserDetails.userClass.transData("@k" & sysChar(1))
+                withUserDetails.removeStatus("flatctrl")
             End If
 
             refreshUser(withUserDetails)
-
         Catch
         End Try
     End Sub
@@ -384,6 +403,14 @@ Public Class clsHoloROOM
         '// Head tilt shiz
         'End If
     End Sub
+    Friend Function roomUserDetails(ByVal roomUID As Integer) As clsHoloUSERDETAILS
+        If roomUsers.ContainsKey(roomUID) = False Then Return Nothing
+        Return roomUsers(roomUID)
+    End Function
+    Friend Function roomUserDetails(ByVal userName As String) As clsHoloUSERDETAILS
+        If roomUsersByName.ContainsKey(userName) = False Then Return Nothing
+        Return roomUsers(userName)
+    End Function
 #End Region
 #Region "Item management"
     Friend Sub placeItem(ByVal userID As Integer, ByVal placePacket As String)
@@ -428,7 +455,7 @@ Public Class clsHoloROOM
                         For tY = iY To iY + iLength - 1
                             If HoloITEM(templateID).typeID = 2 Then
                                 ocState(tX, tY) = 2
-                                ocSitHeight(tX, tY) = ocHeight(tX, tY) + HoloITEM(templateID).topH
+                                ocItemHeight(tX, tY) = ocItemHeight(tX, tY) + HoloITEM(templateID).topH
                                 ocItemRot(tX, tY) = iZ
                             Else
                                 ocState(tX, tY) = 0
@@ -454,75 +481,15 @@ Public Class clsHoloROOM
 
         End Try
     End Sub
-    Friend Sub relocateItem(ByVal itemID As Integer, ByVal newX As Integer, ByVal newY As Integer, ByVal newZ As Integer)
-        Try
-            Dim targetItem As furnitureItem = furnitureItems(itemID)
-            Console.WriteLine("X:" & newX)
-            Console.WriteLine("Y:" & newY)
-            Console.WriteLine("Z:" & newZ)
-            Dim newH As Byte = ocHeight(newX, newY)
-            Dim templateID As Integer = targetItem.tID
-
-            Dim nLength As Integer = getItemLength(templateID, newZ)
-            Dim nWidth As Integer = getItemWidth(templateID, newZ)
-
-            '// Check if the new rotation/movement is possible
-            For nX = newX To newX + nWidth - 1
-                For nY = newY To newY + nLength - 1
-
-                    'If Not (ocState(nX, nY) = 1) Then Return '// If square is blocked then return [new position not possible]
-                    'If Not (ocHeight(nX, nY) = newH) Then Return '// If height of this square is different than the root square, so the user put it on a stair or something, then return [new position not possible]
-                    If ocUserHere(nX, nY) = True Then Return '// If user on this square, then return [new position not possible]
-                Next
-            Next
-
-            Dim oLength As Integer = getItemLength(templateID, targetItem.Z)
-            Dim oWidth As Integer = getItemWidth(templateID, targetItem.Z)
-
-            '// Restore map for the old position
-            For oX = targetItem.X To targetItem.X + oWidth - 1
-                For oY = targetItem.Y To targetItem.Y + oLength - 1
-                    ocState(oX, oY) = 1
-                    ocItemRot(oX, oY) = 0
-                    ocSitHeight(oX, oY) = 0.0
-                Next
-            Next
-
-            '// Set map for the new position
-            For nX = newX To newX + nWidth - 1
-                For nY = newY To newY + nLength - 1
-                    If HoloITEM(templateID).typeID = 2 Then
-                        ocState(nX, nY) = 2
-                        ocSitHeight(nX, nY) = ocHeight(nX, nY) + HoloITEM(templateID).topH
-                        ocItemRot(nX, nY) = newZ
-                    Else
-                        ocState(nX, nY) = 0
-                    End If
-                Next
-            Next
-
-            '// Send the packet to the room
-            sendAll("A_" & itemID & sysChar(2) & HoloITEM(templateID).cctName & sysChar(2) & HoloENCODING.encodeVL64(newX) & HoloENCODING.encodeVL64(newY) & HoloENCODING.encodeVL64(HoloITEM(templateID).Length) & HoloENCODING.encodeVL64(HoloITEM(templateID).Width) & HoloENCODING.encodeVL64(newZ) & newH.ToString & sysChar(2) & HoloITEM(templateID).Colour & sysChar(2) & sysChar(2) & "H" & targetItem.Var & sysChar(2) & sysChar(1))
-            If HoloITEM(templateID).typeID = 2 Then refreshSpot(newX, newY) '// Drop seat under users butt/change rotation sitting user
-
-            '// Update furnitureclass of this item
-            targetItem.X = newX
-            targetItem.Y = newY
-            targetItem.Z = newZ
-            targetItem.H = newH
-        Catch
-        End Try
-    End Sub
     Friend Sub removeItem(ByVal userID As Integer, ByVal itemID As Integer)
         Dim templateID As Integer = HoloDB.runRead("SELECT tid FROM furniture WHERE id = '" & itemID & "' AND roomid = '" & roomID & "' LIMIT 1")
         If templateID = 0 Then Return '// Not found/not in this room
 
         If HoloITEM(templateID).typeID = 0 Then
             sendAll("AT" & itemID & sysChar(1))
-            HoloDB.runQuery("UPDATE furniture_moodlight SET roomid = '0' WHERE id = '" & itemID & "' LIMIT 1") '// Running this query will automatically set the moodlight's preset row's [roomid] field to 0, if it was a moodlight (so the row was found)
+            If HoloITEM(templateID).cctName = "roomdimmer" Then HoloDB.runQuery("UPDATE furniture_moodlight SET roomid = '0' WHERE id = '" & itemID & "' LIMIT 1") '// Set moodlight room ID to 0 [if it's a moodlight]
         Else
             sendAll("A^" & itemID & sysChar(1))
-
             Try
                 If Not (HoloITEM(templateID).typeID = 4) Then '// Not a rug
                     Dim removingItem As furnitureItem = furnitureItems(itemID)
@@ -532,27 +499,86 @@ Public Class clsHoloROOM
                     For tX = removingItem.X To removingItem.X + iWidth - 1
                         For tY = removingItem.Y To removingItem.Y + iLength - 1
                             ocState(tX, tY) = 1
+                            If HoloITEM(removingItem.tID).typeID = 2 Then refreshSpot(tX, tY) '// Drop seated user
                             ocItemRot(tX, tY) = 0
-                            ocSitHeight(tX, tY) = 0.0
-                        Next tY
+                            ocItemHeight(tX, tY) = 0.0
+                            Next tY
                     Next tX
                     furnitureItems.Remove(itemID)
                 End If
             Catch
             End Try
-
         End If
-        HoloDB.runQuery("UPDATE furniture SET roomid = '0',inhand = '" & userID & "',x = '0',y = '0',z = '0',h = '0',opt_wallpos = NULL WHERE id = '" & itemID & "' LIMIT 1")
+
+        If userID = 0 Then
+            HoloDB.runQuery("DELETE FROM furniture WHERE id = '" & itemID & "' LIMIT 1")
+        Else
+            HoloDB.runQuery("UPDATE furniture SET roomid = '0',x = '0',y = '0',z = '0',h = '0',opt_wallpos = NULL,inhand = '" & userID & "' WHERE id = '" & itemID & "' LIMIT 1")
+        End If
+    End Sub
+    Friend Sub relocateItem(ByVal itemID As Integer, ByVal newX As Integer, ByVal newY As Integer, ByVal newZ As Integer)
+        Try
+            Dim targetItem As furnitureItem = furnitureItems(itemID)
+            Dim newH As Integer = ocHeight(newX, newY)
+            Dim nLength As Integer = getItemLength(targetItem.tID, newZ)
+            Dim nWidth As Integer = getItemWidth(targetItem.tID, newZ)
+
+            For X = newX To newX + nWidth - 1
+                For Y = newY To newY + nLength - 1
+                    If ocUserHere(X, Y) = True Then If Not (HoloITEM(targetItem.tID).typeID = 2) Then Return '// Self-explanatory
+                    If Not (ocHeight(X, Y) = newH) Then Return '// Put on a stair or something
+                    'If Not (ocState(X, Y) = 1) Then
+                    '
+                    'End If
+                    'Return '// Square in use
+                Next
+            Next
+
+            Dim oLength As Integer = getItemLength(targetItem.tID, targetItem.Z)
+            Dim oWidth As Integer = getItemWidth(targetItem.tID, targetItem.Z)
+
+            For X = targetItem.X To targetItem.X + oWidth - 1
+                For Y = targetItem.Y To targetItem.Y + oLength - 1
+                    ocState(X, Y) = 1
+                    ocItemHeight(X, Y) = 0.0
+                    ocItemRot(X, Y) = 0
+                Next
+            Next
+
+            If Not (HoloITEM(targetItem.tID).typeID = 4) Then '// Not a rug
+                For X = newX To newX + nWidth - 1
+                    For Y = newY To newY + nLength - 1
+                        ocState(X, Y) = HoloITEM(targetItem.tID).typeID
+                        If ocState(X, Y) = 2 Then
+                            ocItemHeight(X, Y) = HoloITEM(targetItem.tID).topH
+                            ocItemRot(X, Y) = newZ
+                            refreshSpot(X, Y)
+                        End If
+                    Next
+                Next
+            End If
+
+            '// Update furnitureclass of this item
+            targetItem.X = newX
+            targetItem.Y = newY
+            targetItem.Z = newZ
+            targetItem.H = newH
+            sendAll("A_" & targetItem.ToString & sysChar(1))
+            'sendAll("A_" & itemID & sysChar(2) & HoloITEM(targetItem.tID).cctName & sysChar(2) & HoloENCODING.encodeVL64(newX) & HoloENCODING.encodeVL64(newY) & HoloENCODING.encodeVL64(HoloITEM(targetItem.tID).Length) & HoloENCODING.encodeVL64(HoloITEM(targetItem.tID).Width) & HoloENCODING.encodeVL64(newZ) & newH.ToString & sysChar(2) & HoloITEM(templateID).Colour & sysChar(2) & sysChar(2) & "H" & targetItem.Var & sysChar(2) & sysChar(1))
+
+            HoloDB.runQuery("UPDATE furniture SET x = '" & newX & "',y = '" & newY & "',z = '" & newZ & "',h = '" & newH & "' WHERE id = '" & itemID & "' AND roomid = '" & roomID & "' LIMIT 1")
+        Catch
+        End Try
     End Sub
     Private Sub refreshWallitem(ByVal itemID As Integer, ByVal cctName As String, ByVal wallPosition As String, ByVal itemVariable As String)
-        sendAll("AU" & itemID & sysChar(9) & " " & cctName & " " & sysChar(9) & wallPosition & sysChar(9) & itemVariable & sysChar(1))
+        sendAll("AU" & itemID & sysChar(9) & cctName & sysChar(9) & " " & wallPosition & sysChar(9) & itemVariable & sysChar(1))
     End Sub
-    Friend Sub signWallitem(ByVal itemID As Integer, ByVal toStatus As String)
+    Friend Sub signWallitem(ByVal itemID As Integer, ByVal statusID As Integer)
         Dim itemData() As String = HoloDB.runReadArray("SELECT tid,opt_wallpos FROM furniture WHERE id = '" & itemID & "' AND roomid = '" & roomID & "' LIMIT 1")
         If itemData.Count = 0 Then Return '// Item not found/not in this room
 
-        refreshWallitem(itemID, HoloITEM(Integer.Parse(itemData(0))).cctName, itemData(1), toStatus)
-        HoloDB.runQuery("UPDATE furniture SET var = '" & toStatus & "' WHERE id = '" & itemID & "' LIMIT 1")
+        refreshWallitem(itemID, HoloITEM(Integer.Parse(itemData(0))).cctName, itemData(1), statusID)
+        HoloDB.runQuery("UPDATE furniture SET opt_var = '" & statusID & "' WHERE id = '" & itemID & "' LIMIT 1")
     End Sub
 #Region "Habbowheel"
     Friend Sub spinHabbowheel(ByVal itemID As Integer)
@@ -627,7 +653,14 @@ Public Class clsHoloROOM
         End Get
     End Property
 #End Region
-#Region "Private room classes"
+#Region "Misc room tasks"
+    Friend Sub castVote(ByVal userID As Integer, ByVal castedVote As Integer)
+        If HoloDB.checkExists("SELECT userid FROM guestroom_votes WHERE userid = '" & userID & "' AND roomid = '" & roomID & "' LIMIT 1") = True Then Return
+        HoloDB.runQuery("INSERT INTO guestroom_votes (userid,roomid,vote) VALUES ('" & userID & "','" & roomID & "','" & castedVote & "')")
+        sendAll("EY" & Votes(0) & sysChar(1))
+    End Sub
+#End Region
+#Region "Furniture item tasks"
     Private Class furnitureItem
         Friend ID As Integer
         Friend tID As Integer

@@ -29,12 +29,12 @@ Public Class clsHoloMUSMGR
     Private Sub connectionRequest(ByVal c As IAsyncResult)
         '// Will do the check for host later, so it allows connections for other hosts if the socket is used by the Camera
         Dim musConnector As Socket = DirectCast(c.AsyncState, Socket).EndAccept(c)
-        If musConnector.RemoteEndPoint.ToString.Split(":")(0) = HoloRACK.musSocket_Host Then
-            Dim musHandler As New clsHoloMUSSCK(musConnector) '// Initialize new socket
-            socketHandler.BeginAccept(New AsyncCallback(AddressOf connectionRequest), socketHandler) '// Listen for new connections
-        Else '// The connection requester IP is not the same as the HoloCMS server entered in config.ini, this is obv a cunt trying to mess shizzle up, seriously get a life! :D No connection for this one please
-            musConnector.Close()
-        End If
+
+        Dim musHandler As New clsHoloMUSSCK(musConnector) '// Initialize new socket
+        socketHandler.BeginAccept(New AsyncCallback(AddressOf connectionRequest), socketHandler) '// Listen for new connections
+        ' Else '// The connection requester IP is not the same as the HoloCMS server entered in config.ini, this is obv a cunt trying to mess shizzle up, seriously get a life! :D No connection for this one please
+        'musConnector.Close()
+        'End If
     End Sub
     Private Class clsHoloMUSSCK
         Private Connector As Socket
@@ -45,53 +45,71 @@ Public Class clsHoloMUSMGR
         End Sub
         Private Sub dataArrival(ByVal c As IAsyncResult)
             Dim bytesReceived As Integer = Connector.EndReceive(c)
+lol:
             Try
                 Dim strData As String = Encoding.ASCII.GetString(dataBuffer, 0, bytesReceived)
-                Dim musHeader As String = strData.Substring(0, 4)
-                Dim musData() As String = strData.Substring(5).Split(sysChar(2))
+                Console.WriteLine(strData)
 
-                Select Case musHeader
+                If strData.Substring(0, 1) = "r" Then '// Camera binary transfer
+                    Dim binChunk() As String
+                    binChunk = strData.Split(sysChar(0))
+                    binChunk = strData.Split(sysChar(1))
+                    binChunk = strData.Split(sysChar(5))
+                    binChunk = strData.Split(sysChar(6))
+                Else '// HoloCMS MUS socket handling
+                    If Not (Connector.RemoteEndPoint.ToString.Split(":")(0) = HoloRACK.musSocket_Host) Then killConnection() '// Packet comes not from HoloCMS server
+                    Dim musHeader As String = strData.Substring(0, 4)
+                    Dim musData() As String = strData.Substring(5).Split(sysChar(2))
 
-                    Case "HKTM" '// Housekeeping - textmessage [BK] :: "HKTM123This is a test message to user with ID 123"
-                        Dim userID As Integer = musData(0)
-                        Dim strMessage As String = musData(1)
-                        HoloMANAGERS.getUserClass(userID).transData("BK" & strMessage & sysChar(1))
+                    Dim l As String = strData.Substring(0, 4)
+                    MsgBox(l)
+                    Dim rofl() As String = strData.Split(sysChar(5))
 
-                    Case "HKMW" '// Housekeeping - alert user [mod warn] :: "HKMW123This is a test mod warn to user with ID 123"
-                        Dim userID As Integer = musData(0)
-                        Dim strMessage As String = musData(1)
-                        HoloMANAGERS.getUserClass(userID).transData("@amod_warn/" & strMessage & sysChar(1))
+                    If 1 = 1 Then GoTo lol
+                    Select Case musHeader
 
-                    Case "HKUK" '// Housekeeping - kick user from room [mod warn] :: "HKUK123This is a test kick from room + modwarn for user with ID 123"
-                        Dim userID As Integer = musData(0)
-                        Dim strMessage As String = musData(1)
-                        Dim userClass As clsHoloUSER = HoloMANAGERS.getUserClass(userID)
-                        userClass.Room_noRoom(True, True)
-                        userClass.transData("@amod_warn/" & strMessage & sysChar(1))
+                        Case "HKTM" '// Housekeeping - textmessage [BK] :: "HKTM123This is a test message to user with ID 123"
+                            Dim userID As Integer = musData(0)
+                            Dim strMessage As String = musData(1)
+                            HoloMANAGERS.getUserClass(userID).transData("BK" & strMessage & sysChar(1))
 
-                    Case "HKAR" '// Housekeeping - alert certain rank with BK message, contains flag to include users with higher rank :: "HKAR11This is a test message for all users with rank 1 and higher, so kindof a Hotel alert :D"
-                        Dim toRank As Integer = musData(0)
-                        Dim includeHigher As Boolean = (musData(1) = "1")
-                        Dim strMessage As String = musData(2)
-                        HoloMANAGERS.sendToRank(toRank, includeHigher, "BK" & strMessage & sysChar(1))
+                        Case "HKMW" '// Housekeeping - alert user [mod warn] :: "HKMW123This is a test mod warn to user with ID 123"
+                            Dim userID As Integer = musData(0)
+                            Dim strMessage As String = musData(1)
+                            HoloMANAGERS.getUserClass(userID).transData("@amod_warn/" & strMessage & sysChar(1))
 
-                    Case "HKSB" '// Housekeeping - ban user & kick from room :: "HKSB123This is a test ban for user with ID 123"
-                        Dim userID As Integer = musData(0)
-                        Dim strMessage As String = musData(1)
-                        HoloMANAGERS.getUserClass(userID).handleBan(strMessage)
+                        Case "HKUK" '// Housekeeping - kick user from room [mod warn] :: "HKUK123This is a test kick from room + modwarn for user with ID 123"
+                            Dim userID As Integer = musData(0)
+                            Dim strMessage As String = musData(1)
+                            Dim userClass As clsHoloUSER = HoloMANAGERS.getUserClass(userID)
+                            userClass.roomCommunicator.removeUser(userClass.userDetails, True)
 
-                    Case "HKRC" '// Housekeeping - rehash catalogue :: "HKRC"
-                        mainHoloAPP.cacheCatalogue()
+                        Case "HKAR" '// Housekeeping - alert certain rank with BK message, contains flag to include users with higher rank :: "HKAR11This is a test message for all users with rank 1 and higher, so kindof a Hotel alert :D"
+                            Dim toRank As Integer = musData(0)
+                            Dim includeHigher As Boolean = (musData(1) = "1")
+                            Dim strMessage As String = musData(2)
+                            HoloMANAGERS.sendToRank(toRank, includeHigher, "BK" & strMessage & sysChar(1))
 
-                    Case "UPRA" '// User profile - reload figure, sex and mission
-                        Dim userID As Integer = musData(0)
-                        HoloMANAGERS.getUserClass(userID).refreshAppearance(True)
+                        Case "HKSB" '// Housekeeping - ban user & kick from room :: "HKSB123This is a test ban for user with ID 123"
+                            Dim userID As Integer = musData(0)
+                            Dim strMessage As String = musData(1)
+                            HoloMANAGERS.getUserClass(userID).handleBan(strMessage)
 
-                    Case "UPRV" '// User profile - reload valuables (credits, tickets)
-                        Dim userID As Integer = musData(0)
-                        HoloMANAGERS.getUserClass(userID).refreshValuables()
+                        Case "HKRC" '// Housekeeping - rehash catalogue :: "HKRC"
+                            mainHoloAPP.cacheCatalogue()
 
-                End Select
+                        Case "UPRA" '// User profile - reload figure, sex and mission
+                            Dim userID As Integer = musData(0)
+                            HoloMANAGERS.getUserClass(userID).refreshAppearance(True)
+
+                        Case "UPRV" '// User profile - reload valuables (credits, tickets)
+                            Dim userID As Integer = musData(0)
+                            HoloMANAGERS.getUserClass(userID).refreshValuables()
+
+                    End Select
+                End If
+                GoTo lol
+
 
             Catch '// Recklessness ftw, the only error that can occur is the user not being online, so a nullreference at the user class, but do we care? Just dump this mus socket
                 killConnection()
@@ -99,6 +117,7 @@ Public Class clsHoloMUSMGR
 
             End Try
             killConnection() '// Action successfully processed, dump this mus socket
+            GoTo lol
         End Sub
         Private Sub killConnection()
             On Error Resume Next

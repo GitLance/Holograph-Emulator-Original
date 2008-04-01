@@ -10,13 +10,13 @@ Public Class clsHoloUSER
     Friend classID As Integer '// Users socket/class ID
     Friend UserID As Integer '// Users ID in database
     Friend userDetails As clsHoloUSERDETAILS '// Users set of data
+    Friend roomCommunicator As clsHoloROOM '// Reference to the room class used to communicate between this user and it's room
 
     Private byteDataGroup(1024) As Byte '// User's current incoming data group
     Private currentPacket As String '// Current processing packet, so the subs can access it
     Private killedConnection As Boolean '// To prevent multi-use of the killConnection void
     Private timeOut As Byte '// Users connection status
     Private pingManager As Thread
-    Private roomCommunicator As clsHoloROOM '// Reference to the room class used to communicate between this user and it's room
     Private receivedItemIndex As Boolean '// If the user received that very big Dg packet containing the hof furni folders of all cct's
     Private curHandPage As Integer
 
@@ -168,6 +168,8 @@ Public Class clsHoloUSER
                     userDetails.consoleMission = userData(5)
 
                     HoloMANAGERS.hookedUsers.Add(userID, Me)
+                    transData("@B" & HoloRANK(userDetails.Rank).strFuse & sysChar(1))
+                    transData("DbIH" & sysChar(1))
                     transData("@C" & sysChar(1)) '// Let client proceed with login
 
                     '// Background shizzle
@@ -176,7 +178,6 @@ Public Class clsHoloUSER
                 End If
 
             Case "@G" '// Send users appearance etc + the fuserights
-                transData("@B" & HoloRANK(userDetails.Rank).strFuse & sysChar(1)) '// Send users fuserights matching his rank
                 refreshAppearance(False)
 
                 '// If welcome message enabled, then send it
@@ -236,6 +237,25 @@ Public Class clsHoloUSER
 
             Case "BV" '// User performs something on the Navigator (browsing etc)
                 handleNavigatorAction()
+                If True Then Return
+                '// RECOING TEH NAVIGATORR, I UNDERSTAND STRUCTURE NOW <3
+                Dim catID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(3))
+                Dim hideFullRooms As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2, 1))
+                Dim categoryData() As String = HoloDB.runReadArray("SELECT name,parent,ispubcat FROM nav_categories WHERE id = '" & catID & "' LIMIT 1")
+                Dim Navigator As New StringBuilder("C\" & HoloENCODING.encodeVL64(hideFullRooms) & HoloENCODING.encodeVL64(catID) & HoloENCODING.encodeVL64(0) & categoryData(0) & sysChar(2) & HoloENCODING.encodeVL64(0) & HoloENCODING.encodeVL64(10000))
+
+                If 1 = 1 Then Return
+
+                If categoryData(1) = "1" Then '// View publicroom category
+                    Dim hideFullHelper As String = vbNullString : If hideFullRooms = 1 Then hideFullHelper = "AND incnt_now < incnt_max "
+                    Dim roomIDs() As String = HoloDB.runReadArray("SELECT id publicrooms WHERE category_in = '" & catID & "' " & hideFullHelper & "ORDER BY id ASC", True)
+                    For i = 0 To roomIDs.Count - 1
+                        Dim roomData() As String = HoloDB.runReadArray("SELECT name_cct,name_caption,name_icon,incnt_now,incnt_max FROM publicrooms WHERE id = '" & roomIDs(i) & "' LIMIT 1")
+
+                    Next
+                End If
+
+
 
             Case "BW" '// Guestroom category index for create/modify room
                 Dim stagePack As New StringBuilder("C]")
@@ -285,7 +305,12 @@ Public Class clsHoloUSER
                 roomModifier(2)
 
             Case "@U" '// Check guestroom in Navigator (send @v packet)
-                GuestRoom_CheckID()
+                Dim roomID As Integer = currentPacket.Substring(2)
+                Dim roomData() As String = HoloDB.runReadArray("SELECT name,owner,descr,model,state,superusers,showname,category_in,incnt_now,incnt_max FROM guestrooms WHERE id = '" & roomID & "' LIMIT 1")
+                If Not (roomData.Count = 0) Then '// Guestroom exists
+                    Dim allowTrading As Integer = 0 : If HoloDB.runRead("SELECT trading FROM nav_categories WHERE id = '" & roomData(7) & "' LIMIT 1") = "1" Then allowTrading = 1 '// In a trading category
+                    transData("@v" & HoloENCODING.encodeVL64(roomData(5)) & HoloENCODING.encodeVL64(roomData(4)) & HoloENCODING.encodeVL64(roomID) & roomData(1) & sysChar(2) & "model_" & HoloMISC.getRoomModelChar(Byte.Parse(roomData(3))) & sysChar(2) & roomData(0) & sysChar(2) & roomData(2) & sysChar(2) & HoloENCODING.encodeVL64(roomData(6)) & HoloENCODING.encodeVL64(allowTrading) & "H" & HoloENCODING.encodeVL64(roomData(8)) & HoloENCODING.encodeVL64(roomData(9)) & sysChar(1))
+                End If
 
             Case "BX" '// Modify guestroom - click button, send category
                 roomModifier(3)
@@ -300,7 +325,7 @@ Public Class clsHoloUSER
                 roomModifier(6)
 
             Case "@u" '// Go to Hotel View (kick!)
-                Room_noRoom(True, True)
+                If IsNothing(roomCommunicator) = False Then roomCommunicator.removeUser(userDetails, False)
 
             Case "Bv" '// Enter room - loading screen advertisement
                 Dim roomAdvertisement As String = "http://ads.habbohotel.co.uk/max/adview.php?zoneid=325&n=hhuk	http://ads.habbohotel.co.uk/max/adclick.php?n=hhuk"
@@ -314,20 +339,37 @@ Public Class clsHoloUSER
             Case "@B" '// Enter room - determine ID and cct name
                 Dim isPub As Boolean = currentPacket.Substring(2, 1) = "A" '// Guestroom or publicroom?
                 Dim roomID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(3)) '// Get room ID
+                If IsNothing(roomCommunicator) = False Then roomCommunicator.removeUser(userDetails, False)
 
-                If userDetails.roomID > 0 Then Room_noRoom(True, False)
+                transData("@S" & sysChar(1))
+                transData("Bf" & "http://holographemulator.com/" & sysChar(1))
+                If isPub = True Then transData("AE" & HoloDB.runRead("SELECT name_ae FROM publicrooms WHERE id = '" & roomID & "' LIMIT 1") & " " & roomID & sysChar(1))
+
                 userDetails.roomID = roomID
                 userDetails.inPublicroom = isPub
-
-                transData("@S" & sysChar(1) & "Bf" & "http://www.holographemulator.com/" & sysChar(1))
-
-                Dim aeName As String
-                If isPub = True Then aeName = HoloDB.runRead("SELECT name_ae FROM publicrooms WHERE id = '" & roomID & "' LIMIT 1") Else aeName = "model_" & HoloMISC.getRoomModelChar(HoloDB.runRead("SELECT model FROM guestrooms WHERE id = '" & roomID & "' LIMIT 1"))
-
-                transData("AE" & aeName & " " & roomID & sysChar(1))
+                If isPub = True Then userDetails.isAllowedInRoom = True
 
             Case "@y" '// Enter guestroom - determine state (closed, doorbell etc)end 
-                If userDetails.roomID > 0 And userDetails.inPublicroom = False Then GuestRoom_CheckState()
+                If userDetails.inPublicroom = False Then
+                    Dim roomData() As String = HoloDB.runReadArray("SELECT owner,state FROM guestrooms WHERE id = '" & userDetails.roomID & "' LIMIT 1")
+                    If roomData.Count = 0 Then transData("@R" & sysChar(1)) : Return '// Not bound to entering room for some reason :O
+
+                    If userDetails.Name = roomData(0) Or HoloRANK(userDetails.Rank).containsRight("fuse_any_room_controller") = True Then
+                        userDetails.hasRights = True
+                        userDetails.isOwner = True
+                    Else
+                        If roomData(1) = "1" Then '// Room with doorbell
+                            If HoloMANAGERS.hookedRooms.ContainsKey(userDetails.roomID) = True Then DirectCast(HoloMANAGERS.hookedRooms(userDetails.roomID), clsHoloROOM).sendToRightHavingUsers("A[" & userDetails.Name & sysChar(1))
+                            transData("A[" & sysChar(1))
+                            Return '// Wait...
+                        ElseIf roomData(1) = "2" Then '// Room with password
+                            Dim roomPassword As String = currentPacket.Split("/")(1)
+                            If Not (roomPassword = HoloDB.runRead("SELECT opt_password FROM guestrooms WHERE id = '" & userDetails.roomID & "' LIMIT 1")) Then transData("@a" & "Incorrect flat password" & sysChar(1)) : Return '// Send wrong password notice and stop here
+                        End If
+                    End If
+                End If
+                userDetails.isAllowedInRoom = True '// Don't kick the user when he approaches the room
+                transData("@i" & sysChar(1))
 
             Case "Ab" '// Guestroom - answer the doorbell
                 If userDetails.hasRights = False Then Return '// User doesn't has the right to answer doorbells
@@ -337,18 +379,21 @@ Public Class clsHoloUSER
 
                 Dim ringingUser As clsHoloUSERDETAILS = HoloMANAGERS.getUserDetails(Integer.Parse(HoloDB.runRead("SELECT id FROM users WHERE name = '" & ringingOne & "' LIMIT 1")))
                 If IsNothing(ringingUser) Then Return '// The doorbelling one has gone offline, stop here
+                If Not (ringingUser.roomID = Me.userDetails.roomID) Then Return '// The 'inviter' isn't in the same room as the doorbeller
 
                 If letIn = True Then
                     ringingUser.isAllowedInRoom = True
                     ringingUser.userClass.transData("@i" & sysChar(1))
                 Else
                     ringingUser.userClass.transData("BC" & sysChar(1))
+                    ringingUser.Reset()
                 End If
 
             Case "A~" '// Enter room - room advertisement (publicrooms, CP0 = no advertisement)
                 transData("CP0" & sysChar(1))
 
             Case "@|" '// Enter room - hook up with class, get heightmap + room AE incase it's a guestroom
+                If IsNothing(roomCommunicator) = False Or userDetails.isAllowedInRoom = False Then Return
                 If HoloMANAGERS.hookedRooms.ContainsKey(userDetails.roomID) = True Then
                     roomCommunicator = HoloMANAGERS.hookedRooms(userDetails.roomID)
                 Else
@@ -358,27 +403,29 @@ Public Class clsHoloUSER
                 End If
                 transData("@_" & roomCommunicator.Heightmap & sysChar(1))
 
-            Case "@d{" '// Sprites! =x
-                If receivedItemIndex = False Then
-                    transData("Dg[_Dshelves_norjaX~Dshelves_polyfonYmAshelves_siloXQHtable_polyfon_smallYmAchair_polyfonZbBtable_norja_medY_Itable_silo_medX~Dtable_plasto_4legY_Itable_plasto_roundY_Itable_plasto_bigsquareY_Istand_polyfon_zZbBchair_siloX~Dsofa_siloX~Dcouch_norjaX~Dchair_norjaX~Dtable_polyfon_medYmAdoormat_loveZbBdoormat_plainZ[Msofachair_polyfonX~Dsofa_polyfonZ[Msofachair_siloX~Dchair_plastyX~Dchair_plastoYmAtable_plasto_squareY_Ibed_polyfonX~Dbed_polyfon_one[dObed_trad_oneYmAbed_tradYmAbed_silo_oneYmAbed_silo_twoYmAtable_silo_smallX~Dbed_armas_twoYmAbed_budget_oneXQHbed_budgetXQHshelves_armasYmAbench_armasYmAtable_armasYmAsmall_table_armasZbBsmall_chair_armasYmAfireplace_armasYmAlamp_armasYmAbed_armas_oneYmAcarpet_standardY_Icarpet_armasYmAcarpet_polarY_Ifireplace_polyfonY_Itable_plasto_4leg*1Y_Itable_plasto_bigsquare*1Y_Itable_plasto_round*1Y_Itable_plasto_square*1Y_Ichair_plasto*1YmAcarpet_standard*1Y_Idoormat_plain*1Z[Mtable_plasto_4leg*2Y_Itable_plasto_bigsquare*2Y_Itable_plasto_round*2Y_Itable_plasto_square*2Y_Ichair_plasto*2YmAdoormat_plain*2Z[Mcarpet_standard*2Y_Itable_plasto_4leg*3Y_Itable_plasto_bigsquare*3Y_Itable_plasto_round*3Y_Itable_plasto_square*3Y_Ichair_plasto*3YmAcarpet_standard*3Y_Idoormat_plain*3Z[Mtable_plasto_4leg*4Y_Itable_plasto_bigsquare*4Y_Itable_plasto_round*4Y_Itable_plasto_square*4Y_Ichair_plasto*4YmAcarpet_standard*4Y_Idoormat_plain*4Z[Mdoormat_plain*6Z[Mdoormat_plain*5Z[Mcarpet_standard*5Y_Itable_plasto_4leg*5Y_Itable_plasto_bigsquare*5Y_Itable_plasto_round*5Y_Itable_plasto_square*5Y_Ichair_plasto*5YmAtable_plasto_4leg*6Y_Itable_plasto_bigsquare*6Y_Itable_plasto_round*6Y_Itable_plasto_square*6Y_Ichair_plasto*6YmAtable_plasto_4leg*7Y_Itable_plasto_bigsquare*7Y_Itable_plasto_round*7Y_Itable_plasto_square*7Y_Ichair_plasto*7YmAtable_plasto_4leg*8Y_Itable_plasto_bigsquare*8Y_Itable_plasto_round*8Y_Itable_plasto_square*8Y_Ichair_plasto*8YmAtable_plasto_4leg*9Y_Itable_plasto_bigsquare*9Y_Itable_plasto_round*9Y_Itable_plasto_square*9Y_Ichair_plasto*9YmAcarpet_standard*6Y_Ichair_plasty*1X~DpizzaYmAdrinksYmAchair_plasty*2X~Dchair_plasty*3X~Dchair_plasty*4X~Dbar_polyfonY_Iplant_cruddyYmAbottleYmAbardesk_polyfonX~Dbardeskcorner_polyfonX~DfloortileHbar_armasY_Ibartable_armasYmAbar_chair_armasYmAcarpet_softZ@Kcarpet_soft*1Z@Kcarpet_soft*2Z@Kcarpet_soft*3Z@Kcarpet_soft*4Z@Kcarpet_soft*5Z@Kcarpet_soft*6Z@Kred_tvY_Iwood_tvYmAcarpet_polar*1Y_Ichair_plasty*5X~Dcarpet_polar*2Y_Icarpet_polar*3Y_Icarpet_polar*4Y_Ichair_plasty*6X~Dtable_polyfonYmAsmooth_table_polyfonYmAsofachair_polyfon_girlX~Dbed_polyfon_girl_one[dObed_polyfon_girlX~Dsofa_polyfon_girlZ[Mbed_budgetb_oneXQHbed_budgetbXQHplant_pineappleYmAplant_fruittreeY_Iplant_small_cactusY_Iplant_bonsaiY_Iplant_big_cactusY_Iplant_yukkaY_Icarpet_standard*7Y_Icarpet_standard*8Y_Icarpet_standard*9Y_Icarpet_standard*aY_Icarpet_standard*bY_Iplant_sunflowerY_Iplant_roseY_Itv_luxusY_IbathZ\BsinkY_ItoiletYmAduckYmAtileYmAtoilet_redYmAtoilet_yellYmAtile_redYmAtile_yellYmApresent_gen[~Npresent_gen1[~Npresent_gen2[~Npresent_gen3[~Npresent_gen4[~Npresent_gen5[~Npresent_gen6[~Nbar_basicY_Ishelves_basicXQHsoft_sofachair_norjaX~Dsoft_sofa_norjaX~Dlamp_basicXQHlamp2_armasYmAfridgeY_Idoor[dOdoorB[dOdoorC[dOpumpkinYmAskullcandleYmAdeadduckYmAdeadduck2YmAdeadduck3YmAmenorahYmApuddingYmAhamYmAturkeyYmAxmasduckY_IhouseYmAtriplecandleYmAtree3YmAtree4YmAtree5X~Dham2YmAwcandlesetYmArcandlesetYmAstatueYmAheartY_IvaleduckYmAheartsofaX~DthroneYmAsamovarY_IgiftflowersY_IhabbocakeYmAhologramYmAeasterduckY_IbunnyYmAbasketY_IbirdieYmAediceX~Dclub_sofaZ[Mprize1YmAprize2YmAprize3YmAdivider_poly3X~Ddivider_arm1YmAdivider_arm2YmAdivider_arm3YmAdivider_nor1X~Ddivider_silo1X~Ddivider_nor2X~Ddivider_silo2Z[Mdivider_nor3X~Ddivider_silo3X~DtypingmachineYmAspyroYmAredhologramYmAcameraHjoulutahtiYmAhyacinth1YmAhyacinth2YmAchair_plasto*10YmAchair_plasto*11YmAbardeskcorner_polyfon*12X~Dbardeskcorner_polyfon*13X~Dchair_plasto*12YmAchair_plasto*13YmAchair_plasto*14YmAtable_plasto_4leg*14Y_ImocchamasterY_Icarpet_legocourtYmAbench_legoYmAlegotrophyYmAvalentinescreenYmAedicehcYmArare_daffodil_rugYmArare_beehive_bulbY_IhcsohvaYmAhcammeYmArare_elephant_statueYmArare_fountainY_Irare_standYmArare_globeYmArare_hammockYmArare_elephant_statue*1YmArare_elephant_statue*2YmArare_fountain*1Y_Irare_fountain*2Y_Irare_fountain*3Y_Irare_beehive_bulb*1Y_Irare_beehive_bulb*2Y_Irare_xmas_screenY_Irare_parasol*1Y_Irare_parasol*2Y_Irare_parasol*3Y_Itree1X~Dtree2ZmBwcandleYxBrcandleYxBsoft_jaggara_norjaYmAhouse2YmAdjesko_turntableYmAmd_sofaZ[Mmd_limukaappiY_Itable_plasto_4leg*10Y_Itable_plasto_4leg*15Y_Itable_plasto_bigsquare*14Y_Itable_plasto_bigsquare*15Y_Itable_plasto_round*14Y_Itable_plasto_round*15Y_Itable_plasto_square*14Y_Itable_plasto_square*15Y_Ichair_plasto*15YmAchair_plasty*7X~Dchair_plasty*8X~Dchair_plasty*9X~Dchair_plasty*10X~Dchair_plasty*11X~Dchair_plasto*16YmAtable_plasto_4leg*16Y_Ihockey_scoreY_Ihockey_lightYmAdoorD[dOprizetrophy2*3[rIprizetrophy3*3XrIprizetrophy4*3[rIprizetrophy5*3[rIprizetrophy6*3[rIprizetrophy*1Y_Iprizetrophy2*1[rIprizetrophy3*1XrIprizetrophy4*1[rIprizetrophy5*1[rIprizetrophy6*1[rIprizetrophy*2Y_Iprizetrophy2*2[rIprizetrophy3*2XrIprizetrophy4*2[rIprizetrophy5*2[rIprizetrophy6*2[rIprizetrophy*3Y_Irare_parasol*0Hhc_lmp[fBhc_tblYmAhc_chrYmAhc_dskXQHnestHpetfood1ZvCpetfood2ZvCpetfood3ZvCwaterbowl*4XICwaterbowl*5XICwaterbowl*2XICwaterbowl*1XICwaterbowl*3XICtoy1XICtoy1*1XICtoy1*2XICtoy1*3XICtoy1*4XICgoodie1ZvCgoodie1*1ZvCgoodie1*2ZvCgoodie2X~Dprizetrophy7*3[rIprizetrophy7*1[rIprizetrophy7*2[rIscifiport*0Y_Iscifiport*9Y_Iscifiport*8Y_Iscifiport*7Y_Iscifiport*6Y_Iscifiport*5Y_Iscifiport*4Y_Iscifiport*3Y_Iscifiport*2Y_Iscifiport*1Y_Iscifirocket*9Y_Iscifirocket*8Y_Iscifirocket*7Y_Iscifirocket*6Y_Iscifirocket*5Y_Iscifirocket*4Y_Iscifirocket*3Y_Iscifirocket*2Y_Iscifirocket*1Y_Iscifirocket*0Y_Iscifidoor*10Y_Iscifidoor*9Y_Iscifidoor*8Y_Iscifidoor*7Y_Iscifidoor*6Y_Iscifidoor*5Y_Iscifidoor*4Y_Iscifidoor*3Y_Iscifidoor*2Y_Iscifidoor*1Y_Ipillow*5YmApillow*8YmApillow*0YmApillow*1YmApillow*2YmApillow*7YmApillow*9YmApillow*4YmApillow*6YmApillow*3YmAmarquee*1Y_Imarquee*2Y_Imarquee*7Y_Imarquee*aY_Imarquee*8Y_Imarquee*9Y_Imarquee*5Y_Imarquee*4Y_Imarquee*6Y_Imarquee*3Y_Iwooden_screen*1Y_Iwooden_screen*2Y_Iwooden_screen*7Y_Iwooden_screen*0Y_Iwooden_screen*8Y_Iwooden_screen*5Y_Iwooden_screen*9Y_Iwooden_screen*4Y_Iwooden_screen*6Y_Iwooden_screen*3Y_Ipillar*6Y_Ipillar*1Y_Ipillar*9Y_Ipillar*0Y_Ipillar*8Y_Ipillar*2Y_Ipillar*5Y_Ipillar*4Y_Ipillar*7Y_Ipillar*3Y_Irare_dragonlamp*4Y_Irare_dragonlamp*0Y_Irare_dragonlamp*5Y_Irare_dragonlamp*2Y_Irare_dragonlamp*8Y_Irare_dragonlamp*9Y_Irare_dragonlamp*7Y_Irare_dragonlamp*6Y_Irare_dragonlamp*1Y_Irare_dragonlamp*3Y_Irare_icecream*1Y_Irare_icecream*7Y_Irare_icecream*8Y_Irare_icecream*2Y_Irare_icecream*6Y_Irare_icecream*9Y_Irare_icecream*3Y_Irare_icecream*0Y_Irare_icecream*4Y_Irare_icecream*5Y_Irare_fan*7YxBrare_fan*6YxBrare_fan*9YxBrare_fan*3YxBrare_fan*0YxBrare_fan*4YxBrare_fan*5YxBrare_fan*1YxBrare_fan*8YxBrare_fan*2YxBqueue_tile1*3X~Dqueue_tile1*6X~Dqueue_tile1*4X~Dqueue_tile1*9X~Dqueue_tile1*8X~Dqueue_tile1*5X~Dqueue_tile1*7X~Dqueue_tile1*2X~Dqueue_tile1*1X~Dqueue_tile1*0X~DticketHrare_snowrugX~Dcn_lampZxIcn_sofaYmAsporttrack1*1YmAsporttrack1*3YmAsporttrack1*2YmAsporttrack2*1[~Nsporttrack2*2[~Nsporttrack2*3[~Nsporttrack3*1YmAsporttrack3*2YmAsporttrack3*3YmAfootylampX~Dbarchair_siloX~Ddivider_nor4*4X~Dtraffic_light*1ZxItraffic_light*2ZxItraffic_light*3ZxItraffic_light*4ZxItraffic_light*6ZxIrubberchair*1X~Drubberchair*2X~Drubberchair*3X~Drubberchair*4X~Drubberchair*5X~Drubberchair*6X~Dbarrier*1X~Dbarrier*2X~Dbarrier*3X~Drubberchair*7X~Drubberchair*8X~Dtable_norja_med*2Y_Itable_norja_med*3Y_Itable_norja_med*4Y_Itable_norja_med*5Y_Itable_norja_med*6Y_Itable_norja_med*7Y_Itable_norja_med*8Y_Itable_norja_med*9Y_Icouch_norja*2X~Dcouch_norja*3X~Dcouch_norja*4X~Dcouch_norja*5X~Dcouch_norja*6X~Dcouch_norja*7X~Dcouch_norja*8X~Dcouch_norja*9X~Dshelves_norja*2X~Dshelves_norja*3X~Dshelves_norja*4X~Dshelves_norja*5X~Dshelves_norja*6X~Dshelves_norja*7X~Dshelves_norja*8X~Dshelves_norja*9X~Dchair_norja*2X~Dchair_norja*3X~Dchair_norja*4X~Dchair_norja*5X~Dchair_norja*6X~Dchair_norja*7X~Dchair_norja*8X~Dchair_norja*9X~Ddivider_nor1*2X~Ddivider_nor1*3X~Ddivider_nor1*4X~Ddivider_nor1*5X~Ddivider_nor1*6X~Ddivider_nor1*7X~Ddivider_nor1*8X~Ddivider_nor1*9X~Dsoft_sofa_norja*2X~Dsoft_sofa_norja*3X~Dsoft_sofa_norja*4X~Dsoft_sofa_norja*5X~Dsoft_sofa_norja*6X~Dsoft_sofa_norja*7X~Dsoft_sofa_norja*8X~Dsoft_sofa_norja*9X~Dsoft_sofachair_norja*2X~Dsoft_sofachair_norja*3X~Dsoft_sofachair_norja*4X~Dsoft_sofachair_norja*5X~Dsoft_sofachair_norja*6X~Dsoft_sofachair_norja*7X~Dsoft_sofachair_norja*8X~Dsoft_sofachair_norja*9X~Dsofachair_silo*2X~Dsofachair_silo*3X~Dsofachair_silo*4X~Dsofachair_silo*5X~Dsofachair_silo*6X~Dsofachair_silo*7X~Dsofachair_silo*8X~Dsofachair_silo*9X~Dtable_silo_small*2X~Dtable_silo_small*3X~Dtable_silo_small*4X~Dtable_silo_small*5X~Dtable_silo_small*6X~Dtable_silo_small*7X~Dtable_silo_small*8X~Dtable_silo_small*9X~Ddivider_silo1*2X~Ddivider_silo1*3X~Ddivider_silo1*4X~Ddivider_silo1*5X~Ddivider_silo1*6X~Ddivider_silo1*7X~Ddivider_silo1*8X~Ddivider_silo1*9X~Ddivider_silo3*2X~Ddivider_silo3*3X~Ddivider_silo3*4X~Ddivider_silo3*5X~Ddivider_silo3*6X~Ddivider_silo3*7X~Ddivider_silo3*8X~Ddivider_silo3*9X~Dtable_silo_med*2X~Dtable_silo_med*3X~Dtable_silo_med*4X~Dtable_silo_med*5X~Dtable_silo_med*6X~Dtable_silo_med*7X~Dtable_silo_med*8X~Dtable_silo_med*9X~Dsofa_silo*2X~Dsofa_silo*3X~Dsofa_silo*4X~Dsofa_silo*5X~Dsofa_silo*6X~Dsofa_silo*7X~Dsofa_silo*8X~Dsofa_silo*9X~Dsofachair_polyfon*2X~Dsofachair_polyfon*3X~Dsofachair_polyfon*4X~Dsofachair_polyfon*6X~Dsofachair_polyfon*7X~Dsofachair_polyfon*8X~Dsofachair_polyfon*9X~Dsofa_polyfon*2Z[Msofa_polyfon*3Z[Msofa_polyfon*4Z[Msofa_polyfon*6Z[Msofa_polyfon*7Z[Msofa_polyfon*8Z[Msofa_polyfon*9Z[Mbed_polyfon*2X~Dbed_polyfon*3X~Dbed_polyfon*4X~Dbed_polyfon*6X~Dbed_polyfon*7X~Dbed_polyfon*8X~Dbed_polyfon*9X~Dbed_polyfon_one*2[dObed_polyfon_one*3[dObed_polyfon_one*4[dObed_polyfon_one*6[dObed_polyfon_one*7[dObed_polyfon_one*8[dObed_polyfon_one*9[dObardesk_polyfon*2X~Dbardesk_polyfon*3X~Dbardesk_polyfon*4X~Dbardesk_polyfon*5X~Dbardesk_polyfon*6X~Dbardesk_polyfon*7X~Dbardesk_polyfon*8X~Dbardesk_polyfon*9X~Dbardeskcorner_polyfon*2X~Dbardeskcorner_polyfon*3X~Dbardeskcorner_polyfon*4X~Dbardeskcorner_polyfon*5X~Dbardeskcorner_polyfon*6X~Dbardeskcorner_polyfon*7X~Dbardeskcorner_polyfon*8X~Dbardeskcorner_polyfon*9X~Ddivider_poly3*2X~Ddivider_poly3*3X~Ddivider_poly3*4X~Ddivider_poly3*5X~Ddivider_poly3*6X~Ddivider_poly3*7X~Ddivider_poly3*8X~Ddivider_poly3*9X~Dchair_silo*2X~Dchair_silo*3X~Dchair_silo*4X~Dchair_silo*5X~Dchair_silo*6X~Dchair_silo*7X~Dchair_silo*8X~Dchair_silo*9X~Ddivider_nor3*2X~Ddivider_nor3*3X~Ddivider_nor3*4X~Ddivider_nor3*5X~Ddivider_nor3*6X~Ddivider_nor3*7X~Ddivider_nor3*8X~Ddivider_nor3*9X~Ddivider_nor2*2X~Ddivider_nor2*3X~Ddivider_nor2*4X~Ddivider_nor2*5X~Ddivider_nor2*6X~Ddivider_nor2*7X~Ddivider_nor2*8X~Ddivider_nor2*9X~Dsilo_studydeskX~Dsolarium_norjaY_Isolarium_norja*1Y_Isolarium_norja*2Y_Isolarium_norja*3Y_Isolarium_norja*5Y_Isolarium_norja*6Y_Isolarium_norja*7Y_Isolarium_norja*8Y_Isolarium_norja*9Y_IsandrugX~Drare_moonrugYmAchair_chinaYmAchina_tableYmAsleepingbag*1YmAsleepingbag*2YmAsleepingbag*3YmAsleepingbag*4YmAsafe_siloY_Isleepingbag*7YmAsleepingbag*9YmAsleepingbag*5YmAsleepingbag*10YmAsleepingbag*6YmAsleepingbag*8YmAchina_shelveX~Dtraffic_light*5ZxIdivider_nor4*2X~Ddivider_nor4*3X~Ddivider_nor4*5X~Ddivider_nor4*6X~Ddivider_nor4*7X~Ddivider_nor4*8X~Ddivider_nor4*9X~Ddivider_nor5*2X~Ddivider_nor5*3X~Ddivider_nor5*4X~Ddivider_nor5*5X~Ddivider_nor5*6X~Ddivider_nor5*7X~Ddivider_nor5*8X~Ddivider_nor5*9X~Ddivider_nor5X~Ddivider_nor4X~Dwall_chinaYmAcorner_chinaYmAbarchair_silo*2X~Dbarchair_silo*3X~Dbarchair_silo*4X~Dbarchair_silo*5X~Dbarchair_silo*6X~Dbarchair_silo*7X~Dbarchair_silo*8X~Dbarchair_silo*9X~Dsafe_silo*2Y_Isafe_silo*3Y_Isafe_silo*4Y_Isafe_silo*5Y_Isafe_silo*6Y_Isafe_silo*7Y_Isafe_silo*8Y_Isafe_silo*9Y_Iglass_shelfY_Iglass_chairY_Iglass_stoolY_Iglass_sofaY_Iglass_tableY_Iglass_table*2Y_Iglass_table*3Y_Iglass_table*4Y_Iglass_table*5Y_Iglass_table*6Y_Iglass_table*7Y_Iglass_table*8Y_Iglass_table*9Y_Iglass_chair*2Y_Iglass_chair*3Y_Iglass_chair*4Y_Iglass_chair*5Y_Iglass_chair*6Y_Iglass_chair*7Y_Iglass_chair*8Y_Iglass_chair*9Y_Iglass_sofa*2Y_Iglass_sofa*3Y_Iglass_sofa*4Y_Iglass_sofa*5Y_Iglass_sofa*6Y_Iglass_sofa*7Y_Iglass_sofa*8Y_Iglass_sofa*9Y_Iglass_stool*2Y_Iglass_stool*4Y_Iglass_stool*5Y_Iglass_stool*6Y_Iglass_stool*7Y_Iglass_stool*8Y_Iglass_stool*3Y_Iglass_stool*9Y_ICFC_100_coin_goldZvCCFC_10_coin_bronzeZvCCFC_200_moneybagZvCCFC_500_goldbarZvCCFC_50_coin_silverZvCCF_10_coin_goldZvCCF_1_coin_bronzeZvCCF_20_moneybagZvCCF_50_goldbarZvCCF_5_coin_silverZvChc_crptYmAhc_tvZ\BgothgateX~DgothiccandelabraYxBgothrailingX~Dgoth_tableYmAhc_bkshlfYmAhc_btlrY_Ihc_crtnYmAhc_djsetYmAhc_frplcZbBhc_lmpstYmAhc_machineYmAhc_rllrXQHhc_rntgnX~Dhc_trllYmAgothic_chair*1X~Dgothic_sofa*1X~Dgothic_stool*1X~Dgothic_chair*2X~Dgothic_sofa*2X~Dgothic_stool*2X~Dgothic_chair*3X~Dgothic_sofa*3X~Dgothic_stool*3X~Dgothic_chair*4X~Dgothic_sofa*4X~Dgothic_stool*4X~Dgothic_chair*5X~Dgothic_sofa*5X~Dgothic_stool*5X~Dgothic_chair*6X~Dgothic_sofa*6X~Dgothic_stool*6X~Dval_cauldronX~Dsound_machineX~Dromantique_pianochair*3Y_Iromantique_pianochair*5Y_Iromantique_pianochair*2Y_Iromantique_pianochair*4Y_Iromantique_pianochair*1Y_Iromantique_divan*3Y_Iromantique_divan*5Y_Iromantique_divan*2Y_Iromantique_divan*4Y_Iromantique_divan*1Y_Iromantique_chair*3Y_Iromantique_chair*5Y_Iromantique_chair*2Y_Iromantique_chair*4Y_Iromantique_chair*1Y_Irare_parasolY_Iplant_valentinerose*3XICplant_valentinerose*5XICplant_valentinerose*2XICplant_valentinerose*4XICplant_valentinerose*1XICplant_mazegateYeCplant_mazeZcCplant_bulrushXICpetfood4Y_Icarpet_valentineZ|Egothic_carpetXICgothic_carpet2Z|Egothic_chairX~Dgothic_sofaX~Dgothic_stoolX~Dgrand_piano*3Z|Egrand_piano*5Z|Egrand_piano*2Z|Egrand_piano*4Z|Egrand_piano*1Z|Etheatre_seatZ@Kromantique_tray2Y_Iromantique_tray1Y_Iromantique_smalltabl*3Y_Iromantique_smalltabl*5Y_Iromantique_smalltabl*2Y_Iromantique_smalltabl*4Y_Iromantique_smalltabl*1Y_Iromantique_mirrortablY_Iromantique_divider*3Z[Mromantique_divider*2Z[Mromantique_divider*4Z[Mromantique_divider*1Z[Mjp_tatami2YGGjp_tatamiYGGhabbowood_chairYGGjp_bambooYGGjp_iroriXQHjp_pillowYGGsound_set_1Y_Isound_set_2Y_Isound_set_3Y_Isound_set_4Y_Isound_set_5Z@Ksound_set_6Y_Isound_set_7Y_Isound_set_8Y_Isound_set_9Y_Isound_machine*1ZIPspotlightY_Isound_machine*2ZIPsound_machine*3ZIPsound_machine*4ZIPsound_machine*5ZIPsound_machine*6ZIPsound_machine*7ZIProm_lampZ|Erclr_sofaXQHrclr_gardenXQHrclr_chairZ|Esound_set_28Y_Isound_set_27Y_Isound_set_26Y_Isound_set_25Y_Isound_set_24Y_Isound_set_23Y_Isound_set_22Y_Isound_set_21Y_Isound_set_20Z@Ksound_set_19Z@Ksound_set_18Y_Isound_set_17Y_Isound_set_16Y_Isound_set_15Y_Isound_set_14Y_Isound_set_13Y_Isound_set_12Y_Isound_set_11Y_Isound_set_10Y_Irope_dividerXQHromantique_clockY_Irare_icecream_campaignY_Ipura_mdl5*1XQHpura_mdl5*2XQHpura_mdl5*3XQHpura_mdl5*4XQHpura_mdl5*5XQHpura_mdl5*6XQHpura_mdl5*7XQHpura_mdl5*8XQHpura_mdl5*9XQHpura_mdl4*1XQHpura_mdl4*2XQHpura_mdl4*3XQHpura_mdl4*4XQHpura_mdl4*5XQHpura_mdl4*6XQHpura_mdl4*7XQHpura_mdl4*8XQHpura_mdl4*9XQHpura_mdl3*1XQHpura_mdl3*2XQHpura_mdl3*3XQHpura_mdl3*4XQHpura_mdl3*5XQHpura_mdl3*6XQHpura_mdl3*7XQHpura_mdl3*8XQHpura_mdl3*9XQHpura_mdl2*1XQHpura_mdl2*2XQHpura_mdl2*3XQHpura_mdl2*4XQHpura_mdl2*5XQHpura_mdl2*6XQHpura_mdl2*7XQHpura_mdl2*8XQHpura_mdl2*9XQHpura_mdl1*1XQHpura_mdl1*2XQHpura_mdl1*3XQHpura_mdl1*4XQHpura_mdl1*5XQHpura_mdl1*6XQHpura_mdl1*7XQHpura_mdl1*8XQHpura_mdl1*9XQHjp_lanternXQHchair_basic*1XQHchair_basic*2XQHchair_basic*3XQHchair_basic*4XQHchair_basic*5XQHchair_basic*6XQHchair_basic*7XQHchair_basic*8XQHchair_basic*9XQHbed_budget*1XQHbed_budget*2XQHbed_budget*3XQHbed_budget*4XQHbed_budget*5XQHbed_budget*6XQHbed_budget*7XQHbed_budget*8XQHbed_budget*9XQHbed_budget_one*1XQHbed_budget_one*2XQHbed_budget_one*3XQHbed_budget_one*4XQHbed_budget_one*5XQHbed_budget_one*6XQHbed_budget_one*7XQHbed_budget_one*8XQHbed_budget_one*9XQHjp_drawerXQHtile_stellaZ[Mtile_marbleZ[Mtile_brownZ[Msummer_grill*1Y_Isummer_grill*2Y_Isummer_grill*3Y_Isummer_grill*4Y_Isummer_chair*1Y_Isummer_chair*2Y_Isummer_chair*3Y_Isummer_chair*4Y_Isummer_chair*5Y_Isummer_chair*6Y_Isummer_chair*7Y_Isummer_chair*8Y_Isummer_chair*9Y_Isound_set_36ZfIsound_set_35ZfIsound_set_34ZfIsound_set_33ZfIsound_set_32Y_Isound_set_31Y_Isound_set_30Y_Isound_set_29Y_Isound_machine_pro[~Nrare_mnstrY_Ione_way_door*1XQHone_way_door*2XQHone_way_door*3XQHone_way_door*4XQHone_way_door*5XQHone_way_door*6XQHone_way_door*7XQHone_way_door*8XQHone_way_door*9XQHexe_rugZ[Mexe_s_tableZGRsound_set_37ZfIsummer_pool*1ZlIsummer_pool*2ZlIsummer_pool*3ZlIsummer_pool*4ZlIsong_diskY_Ijukebox*1[~Ncarpet_soft_tut[~Nsound_set_44Z@Ksound_set_43Z@Ksound_set_42Z@Ksound_set_41Z@Ksound_set_40Z@Ksound_set_39Z@Ksound_set_38Z@Kgrunge_chairZ@Kgrunge_mattressZ@Kgrunge_radiatorZ@Kgrunge_shelfZ@Kgrunge_signZ@Kgrunge_tableZ@Khabboween_crypt[uKhabboween_grassZ@Khal_cauldronZ@Khal_graveZ@Ksound_set_52ZuKsound_set_51ZuKsound_set_50ZuKsound_set_49ZuKsound_set_48ZuKsound_set_47ZuKsound_set_46ZuKsound_set_45ZuKxmas_icelampZ[Mxmas_cstl_wallZ[Mxmas_cstl_twrZ[Mxmas_cstl_gate[~Ntree7Z[Mtree6Z[Msound_set_54Z[Msound_set_53Z[Msafe_silo_pb[dOplant_mazegate_snowZ[Mplant_maze_snowZ[Mchristmas_sleighZ[Mchristmas_reindeer[~Nchristmas_poopZ[Mexe_bardeskZ[Mexe_chairZ[Mexe_chair2Z[Mexe_cornerZ[Mexe_drinksZ[Mexe_sofaZ[Mexe_tableZ[Msound_set_59[~Nsound_set_58[~Nsound_set_57[~Nsound_set_56[~Nsound_set_55[~Nnoob_table*1[~Nnoob_table*2[~Nnoob_table*3[~Nnoob_table*4[~Nnoob_table*5[~Nnoob_table*6[~Nnoob_stool*1[~Nnoob_stool*2[~Nnoob_stool*3[~Nnoob_stool*4[~Nnoob_stool*5[~Nnoob_stool*6[~Nnoob_rug*1[~Nnoob_rug*2[~Nnoob_rug*3[~Nnoob_rug*4[~Nnoob_rug*5[~Nnoob_rug*6[~Nnoob_lamp*1[dOnoob_lamp*2[dOnoob_lamp*3[dOnoob_lamp*4[dOnoob_lamp*5[dOnoob_lamp*6[dOnoob_chair*1[~Nnoob_chair*2[~Nnoob_chair*3[~Nnoob_chair*4[~Nnoob_chair*5[~Nnoob_chair*6[~Nexe_globe[~Nexe_plantZ[Mval_teddy*1[dOval_teddy*2[dOval_teddy*3[dOval_teddy*4[dOval_teddy*5[dOval_teddy*6[dOval_randomizer[dOval_choco[dOteleport_door[dOsound_set_61[dOsound_set_60[dOfortune[dOsw_tableZIPsw_raven[cQsw_chestZIPsand_cstl_wallZIPsand_cstl_twrZIPsand_cstl_gateZIPgrunge_candleZIPgrunge_benchZIPgrunge_barrelZIPrclr_lampZGRprizetrophy9*1ZGRprizetrophy8*1ZGRnouvelle_traxYcPmd_rugZGRjp_tray6ZGRjp_tray5ZGRjp_tray4ZGRjp_tray3ZGRjp_tray2ZGRjp_tray1ZGRarabian_teamkZGRarabian_snakeZGRarabian_rugZGRarabian_pllwZGRarabian_divdrZGRarabian_chairZGRarabian_bigtbZGRarabian_tetblZGRarabian_tray1ZGRarabian_tray2ZGRarabian_tray3ZGRarabian_tray4ZGRPIpost.itHpost.it.vdHphotoHChessHTicTacToeHBattleShipHPokerHwallpaperHfloorHposterZ@KgothicfountainYxBhc_wall_lampZbBindustrialfanZ`BtorchZ\Bval_heartXBCwallmirrorZ|Ejp_ninjastarsXQHhabw_mirrorXQHhabbowheelZ[Mguitar_skullZ@Kguitar_vZ@Kxmas_light[~Nhrella_poster_3[Nhrella_poster_2ZIPhrella_poster_1[Nsw_swordsZIPsw_stoneZIPsw_holeZIProomdimmerZGRmd_logo_wallZGRmd_canZGRjp_sheet3ZGRjp_sheet2ZGRjp_sheet1ZGRarabian_swordsZGRarabian_wndwZGR")
-                    receivedItemIndex = True
-                End If
-                transData("DiH" & sysChar(1))
+            Case "@{" '// Get guestroom model type + wallpaper etc
+                If userDetails.roomID > 0 And userDetails.inPublicroom = False Then
+                    transData("AEmodel_" & HoloMISC.getRoomModelChar(HoloDB.runRead("SELECT model FROM guestrooms WHERE id = '" & userDetails.roomID & "' LIMIT 1")) & " " & userDetails.roomID & sysChar(1))
 
-            Case "@}" '// Enter room - get inside users
-                transData("@\" & roomCommunicator.insideUsers & sysChar(1))
-                If userDetails.inPublicroom = True Then userDetails.isAllowedInRoom = True
-
-            Case "@~" '// Enter room - get furni items, wallitems and other publicroom items
-                transData("@`" & roomCommunicator.Items & sysChar(1))
-                transData("@^" & roomCommunicator.otherItems & sysChar(1))
-                If roomCommunicator.isPublicRoom = False Then
                     Dim roomDecor() As String = HoloDB.runRead("SELECT decoration FROM guestrooms WHERE id = '" & userDetails.roomID & "' LIMIT 1").Split("/")
                     If roomDecor(0) > 0 Then transData("@nwallpaper/" & roomDecor(0) & sysChar(1)) '// If the room has wallpaper, send it
                     If roomDecor(1) > 0 Then transData("@nfloor/" & roomDecor(1) & sysChar(1)) '// If the room has a floor carpet, send it
+                End If
+            Case "@}" '// Enter room - get inside users
+                If IsNothing(roomCommunicator) = True Or userDetails.isAllowedInRoom = False Then Return
+                userDetails.isAllowedInRoom = True
+                transData("@\" & roomCommunicator.insideUsers & sysChar(1))
+                roomCommunicator.addUser(userDetails)
 
-                    transData("@m" & roomCommunicator.wallItems & sysChar(1))
-                    transData("DiH" & sysChar(1))
+            Case "@~" '// Enter room - get furni items, wallitems and other publicroom items
+                If IsNothing(roomCommunicator) = True Then Return
+                transData("@`" & roomCommunicator.Items & sysChar(1))
+                transData("@^" & roomCommunicator.otherItems & sysChar(1))
+                transData("@m" & roomCommunicator.wallItems & sysChar(1))
+                transData("DiH" & sysChar(1))
+
+                If roomCommunicator.isPublicRoom = False Then
+                    transData("EY" & roomCommunicator.Votes(UserID) & sysChar(1))
 
                     If receivedItemIndex = False Then
                         transData("Dg[_Dshelves_norjaX~Dshelves_polyfonYmAshelves_siloXQHtable_polyfon_smallYmAchair_polyfonZbBtable_norja_medY_Itable_silo_medX~Dtable_plasto_4legY_Itable_plasto_roundY_Itable_plasto_bigsquareY_Istand_polyfon_zZbBchair_siloX~Dsofa_siloX~Dcouch_norjaX~Dchair_norjaX~Dtable_polyfon_medYmAdoormat_loveZbBdoormat_plainZ[Msofachair_polyfonX~Dsofa_polyfonZ[Msofachair_siloX~Dchair_plastyX~Dchair_plastoYmAtable_plasto_squareY_Ibed_polyfonX~Dbed_polyfon_one[dObed_trad_oneYmAbed_tradYmAbed_silo_oneYmAbed_silo_twoYmAtable_silo_smallX~Dbed_armas_twoYmAbed_budget_oneXQHbed_budgetXQHshelves_armasYmAbench_armasYmAtable_armasYmAsmall_table_armasZbBsmall_chair_armasYmAfireplace_armasYmAlamp_armasYmAbed_armas_oneYmAcarpet_standardY_Icarpet_armasYmAcarpet_polarY_Ifireplace_polyfonY_Itable_plasto_4leg*1Y_Itable_plasto_bigsquare*1Y_Itable_plasto_round*1Y_Itable_plasto_square*1Y_Ichair_plasto*1YmAcarpet_standard*1Y_Idoormat_plain*1Z[Mtable_plasto_4leg*2Y_Itable_plasto_bigsquare*2Y_Itable_plasto_round*2Y_Itable_plasto_square*2Y_Ichair_plasto*2YmAdoormat_plain*2Z[Mcarpet_standard*2Y_Itable_plasto_4leg*3Y_Itable_plasto_bigsquare*3Y_Itable_plasto_round*3Y_Itable_plasto_square*3Y_Ichair_plasto*3YmAcarpet_standard*3Y_Idoormat_plain*3Z[Mtable_plasto_4leg*4Y_Itable_plasto_bigsquare*4Y_Itable_plasto_round*4Y_Itable_plasto_square*4Y_Ichair_plasto*4YmAcarpet_standard*4Y_Idoormat_plain*4Z[Mdoormat_plain*6Z[Mdoormat_plain*5Z[Mcarpet_standard*5Y_Itable_plasto_4leg*5Y_Itable_plasto_bigsquare*5Y_Itable_plasto_round*5Y_Itable_plasto_square*5Y_Ichair_plasto*5YmAtable_plasto_4leg*6Y_Itable_plasto_bigsquare*6Y_Itable_plasto_round*6Y_Itable_plasto_square*6Y_Ichair_plasto*6YmAtable_plasto_4leg*7Y_Itable_plasto_bigsquare*7Y_Itable_plasto_round*7Y_Itable_plasto_square*7Y_Ichair_plasto*7YmAtable_plasto_4leg*8Y_Itable_plasto_bigsquare*8Y_Itable_plasto_round*8Y_Itable_plasto_square*8Y_Ichair_plasto*8YmAtable_plasto_4leg*9Y_Itable_plasto_bigsquare*9Y_Itable_plasto_round*9Y_Itable_plasto_square*9Y_Ichair_plasto*9YmAcarpet_standard*6Y_Ichair_plasty*1X~DpizzaYmAdrinksYmAchair_plasty*2X~Dchair_plasty*3X~Dchair_plasty*4X~Dbar_polyfonY_Iplant_cruddyYmAbottleYmAbardesk_polyfonX~Dbardeskcorner_polyfonX~DfloortileHbar_armasY_Ibartable_armasYmAbar_chair_armasYmAcarpet_softZ@Kcarpet_soft*1Z@Kcarpet_soft*2Z@Kcarpet_soft*3Z@Kcarpet_soft*4Z@Kcarpet_soft*5Z@Kcarpet_soft*6Z@Kred_tvY_Iwood_tvYmAcarpet_polar*1Y_Ichair_plasty*5X~Dcarpet_polar*2Y_Icarpet_polar*3Y_Icarpet_polar*4Y_Ichair_plasty*6X~Dtable_polyfonYmAsmooth_table_polyfonYmAsofachair_polyfon_girlX~Dbed_polyfon_girl_one[dObed_polyfon_girlX~Dsofa_polyfon_girlZ[Mbed_budgetb_oneXQHbed_budgetbXQHplant_pineappleYmAplant_fruittreeY_Iplant_small_cactusY_Iplant_bonsaiY_Iplant_big_cactusY_Iplant_yukkaY_Icarpet_standard*7Y_Icarpet_standard*8Y_Icarpet_standard*9Y_Icarpet_standard*aY_Icarpet_standard*bY_Iplant_sunflowerY_Iplant_roseY_Itv_luxusY_IbathZ\BsinkY_ItoiletYmAduckYmAtileYmAtoilet_redYmAtoilet_yellYmAtile_redYmAtile_yellYmApresent_gen[~Npresent_gen1[~Npresent_gen2[~Npresent_gen3[~Npresent_gen4[~Npresent_gen5[~Npresent_gen6[~Nbar_basicY_Ishelves_basicXQHsoft_sofachair_norjaX~Dsoft_sofa_norjaX~Dlamp_basicXQHlamp2_armasYmAfridgeY_Idoor[dOdoorB[dOdoorC[dOpumpkinYmAskullcandleYmAdeadduckYmAdeadduck2YmAdeadduck3YmAmenorahYmApuddingYmAhamYmAturkeyYmAxmasduckY_IhouseYmAtriplecandleYmAtree3YmAtree4YmAtree5X~Dham2YmAwcandlesetYmArcandlesetYmAstatueYmAheartY_IvaleduckYmAheartsofaX~DthroneYmAsamovarY_IgiftflowersY_IhabbocakeYmAhologramYmAeasterduckY_IbunnyYmAbasketY_IbirdieYmAediceX~Dclub_sofaZ[Mprize1YmAprize2YmAprize3YmAdivider_poly3X~Ddivider_arm1YmAdivider_arm2YmAdivider_arm3YmAdivider_nor1X~Ddivider_silo1X~Ddivider_nor2X~Ddivider_silo2Z[Mdivider_nor3X~Ddivider_silo3X~DtypingmachineYmAspyroYmAredhologramYmAcameraHjoulutahtiYmAhyacinth1YmAhyacinth2YmAchair_plasto*10YmAchair_plasto*11YmAbardeskcorner_polyfon*12X~Dbardeskcorner_polyfon*13X~Dchair_plasto*12YmAchair_plasto*13YmAchair_plasto*14YmAtable_plasto_4leg*14Y_ImocchamasterY_Icarpet_legocourtYmAbench_legoYmAlegotrophyYmAvalentinescreenYmAedicehcYmArare_daffodil_rugYmArare_beehive_bulbY_IhcsohvaYmAhcammeYmArare_elephant_statueYmArare_fountainY_Irare_standYmArare_globeYmArare_hammockYmArare_elephant_statue*1YmArare_elephant_statue*2YmArare_fountain*1Y_Irare_fountain*2Y_Irare_fountain*3Y_Irare_beehive_bulb*1Y_Irare_beehive_bulb*2Y_Irare_xmas_screenY_Irare_parasol*1Y_Irare_parasol*2Y_Irare_parasol*3Y_Itree1X~Dtree2ZmBwcandleYxBrcandleYxBsoft_jaggara_norjaYmAhouse2YmAdjesko_turntableYmAmd_sofaZ[Mmd_limukaappiY_Itable_plasto_4leg*10Y_Itable_plasto_4leg*15Y_Itable_plasto_bigsquare*14Y_Itable_plasto_bigsquare*15Y_Itable_plasto_round*14Y_Itable_plasto_round*15Y_Itable_plasto_square*14Y_Itable_plasto_square*15Y_Ichair_plasto*15YmAchair_plasty*7X~Dchair_plasty*8X~Dchair_plasty*9X~Dchair_plasty*10X~Dchair_plasty*11X~Dchair_plasto*16YmAtable_plasto_4leg*16Y_Ihockey_scoreY_Ihockey_lightYmAdoorD[dOprizetrophy2*3[rIprizetrophy3*3XrIprizetrophy4*3[rIprizetrophy5*3[rIprizetrophy6*3[rIprizetrophy*1Y_Iprizetrophy2*1[rIprizetrophy3*1XrIprizetrophy4*1[rIprizetrophy5*1[rIprizetrophy6*1[rIprizetrophy*2Y_Iprizetrophy2*2[rIprizetrophy3*2XrIprizetrophy4*2[rIprizetrophy5*2[rIprizetrophy6*2[rIprizetrophy*3Y_Irare_parasol*0Hhc_lmp[fBhc_tblYmAhc_chrYmAhc_dskXQHnestHpetfood1ZvCpetfood2ZvCpetfood3ZvCwaterbowl*4XICwaterbowl*5XICwaterbowl*2XICwaterbowl*1XICwaterbowl*3XICtoy1XICtoy1*1XICtoy1*2XICtoy1*3XICtoy1*4XICgoodie1ZvCgoodie1*1ZvCgoodie1*2ZvCgoodie2X~Dprizetrophy7*3[rIprizetrophy7*1[rIprizetrophy7*2[rIscifiport*0Y_Iscifiport*9Y_Iscifiport*8Y_Iscifiport*7Y_Iscifiport*6Y_Iscifiport*5Y_Iscifiport*4Y_Iscifiport*3Y_Iscifiport*2Y_Iscifiport*1Y_Iscifirocket*9Y_Iscifirocket*8Y_Iscifirocket*7Y_Iscifirocket*6Y_Iscifirocket*5Y_Iscifirocket*4Y_Iscifirocket*3Y_Iscifirocket*2Y_Iscifirocket*1Y_Iscifirocket*0Y_Iscifidoor*10Y_Iscifidoor*9Y_Iscifidoor*8Y_Iscifidoor*7Y_Iscifidoor*6Y_Iscifidoor*5Y_Iscifidoor*4Y_Iscifidoor*3Y_Iscifidoor*2Y_Iscifidoor*1Y_Ipillow*5YmApillow*8YmApillow*0YmApillow*1YmApillow*2YmApillow*7YmApillow*9YmApillow*4YmApillow*6YmApillow*3YmAmarquee*1Y_Imarquee*2Y_Imarquee*7Y_Imarquee*aY_Imarquee*8Y_Imarquee*9Y_Imarquee*5Y_Imarquee*4Y_Imarquee*6Y_Imarquee*3Y_Iwooden_screen*1Y_Iwooden_screen*2Y_Iwooden_screen*7Y_Iwooden_screen*0Y_Iwooden_screen*8Y_Iwooden_screen*5Y_Iwooden_screen*9Y_Iwooden_screen*4Y_Iwooden_screen*6Y_Iwooden_screen*3Y_Ipillar*6Y_Ipillar*1Y_Ipillar*9Y_Ipillar*0Y_Ipillar*8Y_Ipillar*2Y_Ipillar*5Y_Ipillar*4Y_Ipillar*7Y_Ipillar*3Y_Irare_dragonlamp*4Y_Irare_dragonlamp*0Y_Irare_dragonlamp*5Y_Irare_dragonlamp*2Y_Irare_dragonlamp*8Y_Irare_dragonlamp*9Y_Irare_dragonlamp*7Y_Irare_dragonlamp*6Y_Irare_dragonlamp*1Y_Irare_dragonlamp*3Y_Irare_icecream*1Y_Irare_icecream*7Y_Irare_icecream*8Y_Irare_icecream*2Y_Irare_icecream*6Y_Irare_icecream*9Y_Irare_icecream*3Y_Irare_icecream*0Y_Irare_icecream*4Y_Irare_icecream*5Y_Irare_fan*7YxBrare_fan*6YxBrare_fan*9YxBrare_fan*3YxBrare_fan*0YxBrare_fan*4YxBrare_fan*5YxBrare_fan*1YxBrare_fan*8YxBrare_fan*2YxBqueue_tile1*3X~Dqueue_tile1*6X~Dqueue_tile1*4X~Dqueue_tile1*9X~Dqueue_tile1*8X~Dqueue_tile1*5X~Dqueue_tile1*7X~Dqueue_tile1*2X~Dqueue_tile1*1X~Dqueue_tile1*0X~DticketHrare_snowrugX~Dcn_lampZxIcn_sofaYmAsporttrack1*1YmAsporttrack1*3YmAsporttrack1*2YmAsporttrack2*1[~Nsporttrack2*2[~Nsporttrack2*3[~Nsporttrack3*1YmAsporttrack3*2YmAsporttrack3*3YmAfootylampX~Dbarchair_siloX~Ddivider_nor4*4X~Dtraffic_light*1ZxItraffic_light*2ZxItraffic_light*3ZxItraffic_light*4ZxItraffic_light*6ZxIrubberchair*1X~Drubberchair*2X~Drubberchair*3X~Drubberchair*4X~Drubberchair*5X~Drubberchair*6X~Dbarrier*1X~Dbarrier*2X~Dbarrier*3X~Drubberchair*7X~Drubberchair*8X~Dtable_norja_med*2Y_Itable_norja_med*3Y_Itable_norja_med*4Y_Itable_norja_med*5Y_Itable_norja_med*6Y_Itable_norja_med*7Y_Itable_norja_med*8Y_Itable_norja_med*9Y_Icouch_norja*2X~Dcouch_norja*3X~Dcouch_norja*4X~Dcouch_norja*5X~Dcouch_norja*6X~Dcouch_norja*7X~Dcouch_norja*8X~Dcouch_norja*9X~Dshelves_norja*2X~Dshelves_norja*3X~Dshelves_norja*4X~Dshelves_norja*5X~Dshelves_norja*6X~Dshelves_norja*7X~Dshelves_norja*8X~Dshelves_norja*9X~Dchair_norja*2X~Dchair_norja*3X~Dchair_norja*4X~Dchair_norja*5X~Dchair_norja*6X~Dchair_norja*7X~Dchair_norja*8X~Dchair_norja*9X~Ddivider_nor1*2X~Ddivider_nor1*3X~Ddivider_nor1*4X~Ddivider_nor1*5X~Ddivider_nor1*6X~Ddivider_nor1*7X~Ddivider_nor1*8X~Ddivider_nor1*9X~Dsoft_sofa_norja*2X~Dsoft_sofa_norja*3X~Dsoft_sofa_norja*4X~Dsoft_sofa_norja*5X~Dsoft_sofa_norja*6X~Dsoft_sofa_norja*7X~Dsoft_sofa_norja*8X~Dsoft_sofa_norja*9X~Dsoft_sofachair_norja*2X~Dsoft_sofachair_norja*3X~Dsoft_sofachair_norja*4X~Dsoft_sofachair_norja*5X~Dsoft_sofachair_norja*6X~Dsoft_sofachair_norja*7X~Dsoft_sofachair_norja*8X~Dsoft_sofachair_norja*9X~Dsofachair_silo*2X~Dsofachair_silo*3X~Dsofachair_silo*4X~Dsofachair_silo*5X~Dsofachair_silo*6X~Dsofachair_silo*7X~Dsofachair_silo*8X~Dsofachair_silo*9X~Dtable_silo_small*2X~Dtable_silo_small*3X~Dtable_silo_small*4X~Dtable_silo_small*5X~Dtable_silo_small*6X~Dtable_silo_small*7X~Dtable_silo_small*8X~Dtable_silo_small*9X~Ddivider_silo1*2X~Ddivider_silo1*3X~Ddivider_silo1*4X~Ddivider_silo1*5X~Ddivider_silo1*6X~Ddivider_silo1*7X~Ddivider_silo1*8X~Ddivider_silo1*9X~Ddivider_silo3*2X~Ddivider_silo3*3X~Ddivider_silo3*4X~Ddivider_silo3*5X~Ddivider_silo3*6X~Ddivider_silo3*7X~Ddivider_silo3*8X~Ddivider_silo3*9X~Dtable_silo_med*2X~Dtable_silo_med*3X~Dtable_silo_med*4X~Dtable_silo_med*5X~Dtable_silo_med*6X~Dtable_silo_med*7X~Dtable_silo_med*8X~Dtable_silo_med*9X~Dsofa_silo*2X~Dsofa_silo*3X~Dsofa_silo*4X~Dsofa_silo*5X~Dsofa_silo*6X~Dsofa_silo*7X~Dsofa_silo*8X~Dsofa_silo*9X~Dsofachair_polyfon*2X~Dsofachair_polyfon*3X~Dsofachair_polyfon*4X~Dsofachair_polyfon*6X~Dsofachair_polyfon*7X~Dsofachair_polyfon*8X~Dsofachair_polyfon*9X~Dsofa_polyfon*2Z[Msofa_polyfon*3Z[Msofa_polyfon*4Z[Msofa_polyfon*6Z[Msofa_polyfon*7Z[Msofa_polyfon*8Z[Msofa_polyfon*9Z[Mbed_polyfon*2X~Dbed_polyfon*3X~Dbed_polyfon*4X~Dbed_polyfon*6X~Dbed_polyfon*7X~Dbed_polyfon*8X~Dbed_polyfon*9X~Dbed_polyfon_one*2[dObed_polyfon_one*3[dObed_polyfon_one*4[dObed_polyfon_one*6[dObed_polyfon_one*7[dObed_polyfon_one*8[dObed_polyfon_one*9[dObardesk_polyfon*2X~Dbardesk_polyfon*3X~Dbardesk_polyfon*4X~Dbardesk_polyfon*5X~Dbardesk_polyfon*6X~Dbardesk_polyfon*7X~Dbardesk_polyfon*8X~Dbardesk_polyfon*9X~Dbardeskcorner_polyfon*2X~Dbardeskcorner_polyfon*3X~Dbardeskcorner_polyfon*4X~Dbardeskcorner_polyfon*5X~Dbardeskcorner_polyfon*6X~Dbardeskcorner_polyfon*7X~Dbardeskcorner_polyfon*8X~Dbardeskcorner_polyfon*9X~Ddivider_poly3*2X~Ddivider_poly3*3X~Ddivider_poly3*4X~Ddivider_poly3*5X~Ddivider_poly3*6X~Ddivider_poly3*7X~Ddivider_poly3*8X~Ddivider_poly3*9X~Dchair_silo*2X~Dchair_silo*3X~Dchair_silo*4X~Dchair_silo*5X~Dchair_silo*6X~Dchair_silo*7X~Dchair_silo*8X~Dchair_silo*9X~Ddivider_nor3*2X~Ddivider_nor3*3X~Ddivider_nor3*4X~Ddivider_nor3*5X~Ddivider_nor3*6X~Ddivider_nor3*7X~Ddivider_nor3*8X~Ddivider_nor3*9X~Ddivider_nor2*2X~Ddivider_nor2*3X~Ddivider_nor2*4X~Ddivider_nor2*5X~Ddivider_nor2*6X~Ddivider_nor2*7X~Ddivider_nor2*8X~Ddivider_nor2*9X~Dsilo_studydeskX~Dsolarium_norjaY_Isolarium_norja*1Y_Isolarium_norja*2Y_Isolarium_norja*3Y_Isolarium_norja*5Y_Isolarium_norja*6Y_Isolarium_norja*7Y_Isolarium_norja*8Y_Isolarium_norja*9Y_IsandrugX~Drare_moonrugYmAchair_chinaYmAchina_tableYmAsleepingbag*1YmAsleepingbag*2YmAsleepingbag*3YmAsleepingbag*4YmAsafe_siloY_Isleepingbag*7YmAsleepingbag*9YmAsleepingbag*5YmAsleepingbag*10YmAsleepingbag*6YmAsleepingbag*8YmAchina_shelveX~Dtraffic_light*5ZxIdivider_nor4*2X~Ddivider_nor4*3X~Ddivider_nor4*5X~Ddivider_nor4*6X~Ddivider_nor4*7X~Ddivider_nor4*8X~Ddivider_nor4*9X~Ddivider_nor5*2X~Ddivider_nor5*3X~Ddivider_nor5*4X~Ddivider_nor5*5X~Ddivider_nor5*6X~Ddivider_nor5*7X~Ddivider_nor5*8X~Ddivider_nor5*9X~Ddivider_nor5X~Ddivider_nor4X~Dwall_chinaYmAcorner_chinaYmAbarchair_silo*2X~Dbarchair_silo*3X~Dbarchair_silo*4X~Dbarchair_silo*5X~Dbarchair_silo*6X~Dbarchair_silo*7X~Dbarchair_silo*8X~Dbarchair_silo*9X~Dsafe_silo*2Y_Isafe_silo*3Y_Isafe_silo*4Y_Isafe_silo*5Y_Isafe_silo*6Y_Isafe_silo*7Y_Isafe_silo*8Y_Isafe_silo*9Y_Iglass_shelfY_Iglass_chairY_Iglass_stoolY_Iglass_sofaY_Iglass_tableY_Iglass_table*2Y_Iglass_table*3Y_Iglass_table*4Y_Iglass_table*5Y_Iglass_table*6Y_Iglass_table*7Y_Iglass_table*8Y_Iglass_table*9Y_Iglass_chair*2Y_Iglass_chair*3Y_Iglass_chair*4Y_Iglass_chair*5Y_Iglass_chair*6Y_Iglass_chair*7Y_Iglass_chair*8Y_Iglass_chair*9Y_Iglass_sofa*2Y_Iglass_sofa*3Y_Iglass_sofa*4Y_Iglass_sofa*5Y_Iglass_sofa*6Y_Iglass_sofa*7Y_Iglass_sofa*8Y_Iglass_sofa*9Y_Iglass_stool*2Y_Iglass_stool*4Y_Iglass_stool*5Y_Iglass_stool*6Y_Iglass_stool*7Y_Iglass_stool*8Y_Iglass_stool*3Y_Iglass_stool*9Y_ICFC_100_coin_goldZvCCFC_10_coin_bronzeZvCCFC_200_moneybagZvCCFC_500_goldbarZvCCFC_50_coin_silverZvCCF_10_coin_goldZvCCF_1_coin_bronzeZvCCF_20_moneybagZvCCF_50_goldbarZvCCF_5_coin_silverZvChc_crptYmAhc_tvZ\BgothgateX~DgothiccandelabraYxBgothrailingX~Dgoth_tableYmAhc_bkshlfYmAhc_btlrY_Ihc_crtnYmAhc_djsetYmAhc_frplcZbBhc_lmpstYmAhc_machineYmAhc_rllrXQHhc_rntgnX~Dhc_trllYmAgothic_chair*1X~Dgothic_sofa*1X~Dgothic_stool*1X~Dgothic_chair*2X~Dgothic_sofa*2X~Dgothic_stool*2X~Dgothic_chair*3X~Dgothic_sofa*3X~Dgothic_stool*3X~Dgothic_chair*4X~Dgothic_sofa*4X~Dgothic_stool*4X~Dgothic_chair*5X~Dgothic_sofa*5X~Dgothic_stool*5X~Dgothic_chair*6X~Dgothic_sofa*6X~Dgothic_stool*6X~Dval_cauldronX~Dsound_machineX~Dromantique_pianochair*3Y_Iromantique_pianochair*5Y_Iromantique_pianochair*2Y_Iromantique_pianochair*4Y_Iromantique_pianochair*1Y_Iromantique_divan*3Y_Iromantique_divan*5Y_Iromantique_divan*2Y_Iromantique_divan*4Y_Iromantique_divan*1Y_Iromantique_chair*3Y_Iromantique_chair*5Y_Iromantique_chair*2Y_Iromantique_chair*4Y_Iromantique_chair*1Y_Irare_parasolY_Iplant_valentinerose*3XICplant_valentinerose*5XICplant_valentinerose*2XICplant_valentinerose*4XICplant_valentinerose*1XICplant_mazegateYeCplant_mazeZcCplant_bulrushXICpetfood4Y_Icarpet_valentineZ|Egothic_carpetXICgothic_carpet2Z|Egothic_chairX~Dgothic_sofaX~Dgothic_stoolX~Dgrand_piano*3Z|Egrand_piano*5Z|Egrand_piano*2Z|Egrand_piano*4Z|Egrand_piano*1Z|Etheatre_seatZ@Kromantique_tray2Y_Iromantique_tray1Y_Iromantique_smalltabl*3Y_Iromantique_smalltabl*5Y_Iromantique_smalltabl*2Y_Iromantique_smalltabl*4Y_Iromantique_smalltabl*1Y_Iromantique_mirrortablY_Iromantique_divider*3Z[Mromantique_divider*2Z[Mromantique_divider*4Z[Mromantique_divider*1Z[Mjp_tatami2YGGjp_tatamiYGGhabbowood_chairYGGjp_bambooYGGjp_iroriXQHjp_pillowYGGsound_set_1Y_Isound_set_2Y_Isound_set_3Y_Isound_set_4Y_Isound_set_5Z@Ksound_set_6Y_Isound_set_7Y_Isound_set_8Y_Isound_set_9Y_Isound_machine*1ZIPspotlightY_Isound_machine*2ZIPsound_machine*3ZIPsound_machine*4ZIPsound_machine*5ZIPsound_machine*6ZIPsound_machine*7ZIProm_lampZ|Erclr_sofaXQHrclr_gardenXQHrclr_chairZ|Esound_set_28Y_Isound_set_27Y_Isound_set_26Y_Isound_set_25Y_Isound_set_24Y_Isound_set_23Y_Isound_set_22Y_Isound_set_21Y_Isound_set_20Z@Ksound_set_19Z@Ksound_set_18Y_Isound_set_17Y_Isound_set_16Y_Isound_set_15Y_Isound_set_14Y_Isound_set_13Y_Isound_set_12Y_Isound_set_11Y_Isound_set_10Y_Irope_dividerXQHromantique_clockY_Irare_icecream_campaignY_Ipura_mdl5*1XQHpura_mdl5*2XQHpura_mdl5*3XQHpura_mdl5*4XQHpura_mdl5*5XQHpura_mdl5*6XQHpura_mdl5*7XQHpura_mdl5*8XQHpura_mdl5*9XQHpura_mdl4*1XQHpura_mdl4*2XQHpura_mdl4*3XQHpura_mdl4*4XQHpura_mdl4*5XQHpura_mdl4*6XQHpura_mdl4*7XQHpura_mdl4*8XQHpura_mdl4*9XQHpura_mdl3*1XQHpura_mdl3*2XQHpura_mdl3*3XQHpura_mdl3*4XQHpura_mdl3*5XQHpura_mdl3*6XQHpura_mdl3*7XQHpura_mdl3*8XQHpura_mdl3*9XQHpura_mdl2*1XQHpura_mdl2*2XQHpura_mdl2*3XQHpura_mdl2*4XQHpura_mdl2*5XQHpura_mdl2*6XQHpura_mdl2*7XQHpura_mdl2*8XQHpura_mdl2*9XQHpura_mdl1*1XQHpura_mdl1*2XQHpura_mdl1*3XQHpura_mdl1*4XQHpura_mdl1*5XQHpura_mdl1*6XQHpura_mdl1*7XQHpura_mdl1*8XQHpura_mdl1*9XQHjp_lanternXQHchair_basic*1XQHchair_basic*2XQHchair_basic*3XQHchair_basic*4XQHchair_basic*5XQHchair_basic*6XQHchair_basic*7XQHchair_basic*8XQHchair_basic*9XQHbed_budget*1XQHbed_budget*2XQHbed_budget*3XQHbed_budget*4XQHbed_budget*5XQHbed_budget*6XQHbed_budget*7XQHbed_budget*8XQHbed_budget*9XQHbed_budget_one*1XQHbed_budget_one*2XQHbed_budget_one*3XQHbed_budget_one*4XQHbed_budget_one*5XQHbed_budget_one*6XQHbed_budget_one*7XQHbed_budget_one*8XQHbed_budget_one*9XQHjp_drawerXQHtile_stellaZ[Mtile_marbleZ[Mtile_brownZ[Msummer_grill*1Y_Isummer_grill*2Y_Isummer_grill*3Y_Isummer_grill*4Y_Isummer_chair*1Y_Isummer_chair*2Y_Isummer_chair*3Y_Isummer_chair*4Y_Isummer_chair*5Y_Isummer_chair*6Y_Isummer_chair*7Y_Isummer_chair*8Y_Isummer_chair*9Y_Isound_set_36ZfIsound_set_35ZfIsound_set_34ZfIsound_set_33ZfIsound_set_32Y_Isound_set_31Y_Isound_set_30Y_Isound_set_29Y_Isound_machine_pro[~Nrare_mnstrY_Ione_way_door*1XQHone_way_door*2XQHone_way_door*3XQHone_way_door*4XQHone_way_door*5XQHone_way_door*6XQHone_way_door*7XQHone_way_door*8XQHone_way_door*9XQHexe_rugZ[Mexe_s_tableZGRsound_set_37ZfIsummer_pool*1ZlIsummer_pool*2ZlIsummer_pool*3ZlIsummer_pool*4ZlIsong_diskY_Ijukebox*1[~Ncarpet_soft_tut[~Nsound_set_44Z@Ksound_set_43Z@Ksound_set_42Z@Ksound_set_41Z@Ksound_set_40Z@Ksound_set_39Z@Ksound_set_38Z@Kgrunge_chairZ@Kgrunge_mattressZ@Kgrunge_radiatorZ@Kgrunge_shelfZ@Kgrunge_signZ@Kgrunge_tableZ@Khabboween_crypt[uKhabboween_grassZ@Khal_cauldronZ@Khal_graveZ@Ksound_set_52ZuKsound_set_51ZuKsound_set_50ZuKsound_set_49ZuKsound_set_48ZuKsound_set_47ZuKsound_set_46ZuKsound_set_45ZuKxmas_icelampZ[Mxmas_cstl_wallZ[Mxmas_cstl_twrZ[Mxmas_cstl_gate[~Ntree7Z[Mtree6Z[Msound_set_54Z[Msound_set_53Z[Msafe_silo_pb[dOplant_mazegate_snowZ[Mplant_maze_snowZ[Mchristmas_sleighZ[Mchristmas_reindeer[~Nchristmas_poopZ[Mexe_bardeskZ[Mexe_chairZ[Mexe_chair2Z[Mexe_cornerZ[Mexe_drinksZ[Mexe_sofaZ[Mexe_tableZ[Msound_set_59[~Nsound_set_58[~Nsound_set_57[~Nsound_set_56[~Nsound_set_55[~Nnoob_table*1[~Nnoob_table*2[~Nnoob_table*3[~Nnoob_table*4[~Nnoob_table*5[~Nnoob_table*6[~Nnoob_stool*1[~Nnoob_stool*2[~Nnoob_stool*3[~Nnoob_stool*4[~Nnoob_stool*5[~Nnoob_stool*6[~Nnoob_rug*1[~Nnoob_rug*2[~Nnoob_rug*3[~Nnoob_rug*4[~Nnoob_rug*5[~Nnoob_rug*6[~Nnoob_lamp*1[dOnoob_lamp*2[dOnoob_lamp*3[dOnoob_lamp*4[dOnoob_lamp*5[dOnoob_lamp*6[dOnoob_chair*1[~Nnoob_chair*2[~Nnoob_chair*3[~Nnoob_chair*4[~Nnoob_chair*5[~Nnoob_chair*6[~Nexe_globe[~Nexe_plantZ[Mval_teddy*1[dOval_teddy*2[dOval_teddy*3[dOval_teddy*4[dOval_teddy*5[dOval_teddy*6[dOval_randomizer[dOval_choco[dOteleport_door[dOsound_set_61[dOsound_set_60[dOfortune[dOsw_tableZIPsw_raven[cQsw_chestZIPsand_cstl_wallZIPsand_cstl_twrZIPsand_cstl_gateZIPgrunge_candleZIPgrunge_benchZIPgrunge_barrelZIPrclr_lampZGRprizetrophy9*1ZGRprizetrophy8*1ZGRnouvelle_traxYcPmd_rugZGRjp_tray6ZGRjp_tray5ZGRjp_tray4ZGRjp_tray3ZGRjp_tray2ZGRjp_tray1ZGRarabian_teamkZGRarabian_snakeZGRarabian_rugZGRarabian_pllwZGRarabian_divdrZGRarabian_chairZGRarabian_bigtbZGRarabian_tetblZGRarabian_tray1ZGRarabian_tray2ZGRarabian_tray3ZGRarabian_tray4ZGRPIpost.itHpost.it.vdHphotoHChessHTicTacToeHBattleShipHPokerHwallpaperHfloorHposterZ@KgothicfountainYxBhc_wall_lampZbBindustrialfanZ`BtorchZ\Bval_heartXBCwallmirrorZ|Ejp_ninjastarsXQHhabw_mirrorXQHhabbowheelZ[Mguitar_skullZ@Kguitar_vZ@Kxmas_light[~Nhrella_poster_3[Nhrella_poster_2ZIPhrella_poster_1[Nsw_swordsZIPsw_stoneZIPsw_holeZIProomdimmerZGRmd_logo_wallZGRmd_canZGRjp_sheet3ZGRjp_sheet2ZGRjp_sheet1ZGRarabian_swordsZGRarabian_wndwZGR")
@@ -386,8 +433,18 @@ Public Class clsHoloUSER
                     End If
                 End If
 
-            Case "A@" '// Enter room - add this user to the room and get refreshed statuses of other users (good rotation, sitting etc)
-                roomCommunicator.enterUser(userDetails)
+            Case "A@" '// Enter room - get rights + refresh users
+                If IsNothing(roomCommunicator) = True Then Return
+                If userDetails.inPublicroom = False Then '// Only hand out rights when in guestroom
+                    If userDetails.hasRights = False Then userDetails.hasRights = HoloDB.checkExists("SELECT userid FROM guestroom_rights WHERE userid = '" & UserID & "' AND roomid = '" & userDetails.roomID & "' LIMIT 1")
+                    If userDetails.isOwner = True Then userDetails.addStatus("flatctrl", "useradmin") : transData("@o" & sysChar(1))
+                    If userDetails.hasRights = True Then
+                        If userDetails.containsStatus("flatctrl") = False Then userDetails.addStatus("flatctrl", "onlyfurniture")
+                        transData("@j" & sysChar(1))
+                    End If
+                End If
+                transData("@D" & HoloENCODING.encodeVL64(99) & sysChar(1)) '// Some camera pictures :D
+                transData("@b" & roomCommunicator.insideUsersDynamics & sysChar(1))
 
                 'Case "bbShizzle" '// ._.
                 '   userDetails.inBBLobby = False
@@ -465,7 +522,10 @@ Public Class clsHoloUSER
                 userDetails.showLidoVote(safeParse(currentPacket.Substring(2)))
 
             Case "As" '// User clicks door of the room
-                Room_noRoom(True, True)
+                If IsNothing(roomCommunicator) = True Then Return
+                userDetails.DestX = roomCommunicator.doorX
+                userDetails.DestY = roomCommunicator.doorY
+                userDetails.walkLock = True
 
             Case "AX" '// Stop an action/status
                 Dim toStop As String = currentPacket.Substring(2)
@@ -481,7 +541,7 @@ Public Class clsHoloUSER
                 Catch
                 End Try
 
-            Case "AP" '// Start carrying an item
+            Case "AP", "AW" '// Start carrying an item
                 userDetails.CarryItem(currentPacket.Substring(2))
 
             Case "AK" '// Walking
@@ -624,28 +684,45 @@ Public Class clsHoloUSER
 
                 Catch '// Page not found, user doesn't has access to page or something went wrong!
                     errorUser()
-                    MsgBox(Err.Description)
                 End Try
 
             Case "AZ" '// User places item down
                 If IsNothing(roomCommunicator) Then Return '// User not in room
-                If userDetails.isOwner = False Then Return
+                If userDetails.isOwner = False Then Return '// No placedown rights for this room
                 roomCommunicator.placeItem(UserID, currentPacket.Substring(2))
 
             Case "AC" '// User picks item up
-                '// ACnew stuff 10
                 If IsNothing(roomCommunicator) Then Return '// User not in room
-                If userDetails.isOwner = False Then Return
+                If userDetails.isOwner = False Then Return '// No pickup rights for this room
                 roomCommunicator.removeItem(UserID, Integer.Parse(currentPacket.Split(" ")(2)))
                 refreshHand("last")
 
             Case "AI" '// User rotates/moves item
                 If IsNothing(roomCommunicator) Then Return '// User not in room
-                If userDetails.isOwner = False Then Return
+                If userDetails.hasRights = False Then Return '// No rotate/move rights for this room
 
                 Dim packetContent() As String = currentPacket.Substring(2).Split(" ")
                 roomCommunicator.relocateItem(packetContent(0), packetContent(1), packetContent(2), packetContent(3))
 
+            Case "Ac" '// User deletes item [requires mod in external_variables but has been common on retros]
+                If IsNothing(roomCommunicator) Then Return '// User not in room
+                If userDetails.isOwner = False Then Return '// No pickup rights for this room
+
+                Dim itemID As Integer = currentPacket.Substring(2)
+                roomCommunicator.removeItem(0, itemID)
+
+            Case "Bw" '// User redeems a Habbo Bank item [coin, sack with credits or w/e]
+                If IsNothing(roomCommunicator) Then Return '// User not in room
+                If userDetails.isOwner = False Then Return '// No pickup rights for this room
+
+                Dim itemID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2))
+                Dim spritePart() As String = HoloITEM(HoloDB.runRead("SELECT tid FROM furniture WHERE id = '" & itemID & "' AND roomid = '" & userDetails.roomID & "' LIMIT 1")).cctName.Split("_")
+                If spritePart(0) = "cf" And IsNumeric(spritePart(1)) Then '// If the item was found in this room and it's a Habbo Exchange item
+                    Dim newCredits As Integer = HoloDB.runRead("SELECT credits FROM users WHERE id = '" & UserID & "' LIMIT 1") + spritePart(1)
+                    roomCommunicator.removeItem(0, itemID)
+                    transData("@F" & newCredits & ".0" & sysChar(1))
+                    HoloDB.runQuery("UPDATE users SET credits = credits + " & spritePart(1) & " WHERE id = '" & UserID & "' LIMIT 1")
+                End If
 
             Case "Cm" '// User wants to send a CFH message
                 Dim cfhStats() As String = HoloDB.runReadArray("SELECT id,date,message FROM cms_help WHERE username = '" & userDetails.Name & "' LIMIT 1")
@@ -731,6 +808,11 @@ Public Class clsHoloUSER
                 Dim itemID As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2))
                 roomCommunicator.spinHabbowheel(itemID)
 
+            Case "DE" '// User casts vote on guestroom
+                Dim castedVote As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(2))
+                If Not (castedVote = 1 Or castedVote = -1) Then Return
+                roomCommunicator.castVote(UserID, castedVote)
+
             Case "EU" '// Load moodlight settings
                 If userDetails.isOwner = False Then Return '// Only room owners [includes staff] are allowed to adjust the moodlight, so if they aren't owner then they don't need the settings!
                 Dim settingData As String = roomCommunicator.moodLight_GetSettings
@@ -750,11 +832,72 @@ Public Class clsHoloUSER
 
             Case "CV" '// Put wallitem on/off [signing]
                 Dim itemID As String = currentPacket.Substring(4, HoloENCODING.decodeB64(currentPacket.Substring(2, 2)))
-                Dim toStatus As String = currentPacket.Substring(itemID.Length + 6)
+                Dim toStatus As Integer = HoloENCODING.decodeVL64(currentPacket.Substring(itemID.Length + 4))
                 roomCommunicator.signWallitem(itemID, toStatus)
 
             Case "AJ" '// Put floor item on/off [signing]
                 'cba for now, eating =]
+
+            Case "AG" '// Trading - request trade with someone
+                If IsNothing(roomCommunicator) = True Then Return '// User is not in room
+                If userDetails.containsStatus("trd") Then Return '// This user is already trading
+
+                Dim partnerUID As Integer = currentPacket.Substring(2)
+                Dim partnerClass As clsHoloUSERDETAILS = roomCommunicator.roomUserDetails(partnerUID)
+                If IsNothing(partnerClass) = True Then Return '// Partner was not in room/not found
+                If partnerClass.containsStatus("trd") = True Then Return '// Partner is already trading
+
+                '// Create is-trading status in room
+                userDetails.addStatus("trd", vbNullString)
+                partnerClass.addStatus("trd", vbNullString)
+                Me.Refresh()
+                partnerClass.userClass.Refresh()
+
+                userDetails.tradePartnerUID = partnerUID
+                partnerClass.tradePartnerUID = userDetails.roomUID
+                userDetails.refreshTradeBoxes() : partnerClass.refreshTradeBoxes()
+
+            Case "AH" '// Trading - offer an item
+                Dim partnerClass As clsHoloUSERDETAILS = roomCommunicator.roomUserDetails(userDetails.tradePartnerUID)
+                If IsNothing(partnerClass) = True Then Return '// Not trading
+
+                Dim itemID As Integer = currentPacket.Substring(2) '// Get the ID of the item the user offers
+                Dim templateID As Integer = HoloDB.runRead("SELECT id FROM furniture WHERE id = '" & itemID & "' AND inhand = '" & UserID & "' LIMIT 1")
+                If templateID = 0 Then Return '// You don't have this item! :D
+                userDetails.tradeAccept = False : partnerClass.tradeAccept = False '// Reset 'accept trade' boxes
+                userDetails.tradeItems(userDetails.tradeItemCount) = itemID '// Add this item to the slot in the integer array with trading items
+                userDetails.tradeItemCount += 1 '// Increment trading count for this users items plus one
+                userDetails.refreshTradeBoxes() : partnerClass.refreshTradeBoxes() '// Refresh the tradeboxes
+
+            Case "AD" '// Trading - decline trade
+                Dim partnerClass As clsHoloUSERDETAILS = roomCommunicator.roomUserDetails(userDetails.tradePartnerUID)
+                If IsNothing(partnerClass) = True Then Return '// Not trading
+                userDetails.tradeAccept = False
+                userDetails.refreshTradeBoxes() : partnerClass.refreshTradeBoxes()
+
+            Case "AE" '// Trading - accept trade [if both partners have accept then proceed the trading]
+                Dim partnerClass As clsHoloUSERDETAILS = roomCommunicator.roomUserDetails(userDetails.tradePartnerUID)
+                If IsNothing(partnerClass) = True Then Return '// Not trading
+                userDetails.tradeAccept = True
+                userDetails.refreshTradeBoxes() : partnerClass.refreshTradeBoxes()
+
+                If partnerClass.tradeAccept = True Then '// The other partner has already accepted, trade the items in database
+                    For i = 0 To userDetails.tradeItemCount - 1 '// Swap the items from this user > the partner
+                        If userDetails.tradeItems(i) = 0 Then Continue For '// Empty slot
+                        HoloDB.runQuery("UPDATE furniture SET roomid = '0',inhand = '" & partnerClass.UserID & "' WHERE id = '" & userDetails.tradeItems(i) & "' LIMIT 1")
+                    Next
+                    For i = 0 To partnerClass.tradeItemCount - 1 '// Swap the items from the partner > this user
+                        If partnerClass.tradeItems(i) = 0 Then Continue For '// Empty slot
+                        HoloDB.runQuery("UPDATE furniture SET roomid = '0',inhand = '" & Me.UserID & "' WHERE id = '" & partnerClass.tradeItems(i) & "' LIMIT 1")
+                    Next
+
+                    '// Handle the abort of the trade
+                    userDetails.abortTrade()
+                End If
+
+            Case "AF" '// Trading - leave trade
+                userDetails.abortTrade() '// Just invoke the abort method, if the user isn't trading at all or something then nothing happens
+                refreshHand("update") '// Update the hand [so all the non-traded items are back! :D]
 
         End Select
         'Catch ex As Exception
@@ -770,7 +913,7 @@ Public Class clsHoloUSER
 
         If HoloMANAGERS.hookedUsers.ContainsKey(UserID) = True Then HoloMANAGERS.hookedUsers.Remove(Me) '// Remove this user class from the hookedUsers
         If pingManager.IsAlive = True Then pingManager.Abort() '// If the userpinger is running (obv in most cases) then abort it
-        If userDetails.roomID > 0 Then Room_noRoom(True, False)
+        If IsNothing(roomCommunicator) = False Then roomCommunicator.removeUser(userDetails, False)
         HoloSCKMGR.flagSocketAsFree(classID) '// Flag this socket as free again for the socket manager
         userDetails = Nothing
 
@@ -1049,11 +1192,12 @@ Public Class clsHoloUSER
         Dim updatedFriendsPack As New StringBuilder
         Dim friendIDs() As String = HoloDB.runReadArray("SELECT userid,friendid FROM messenger_friendships WHERE (userid = '" & UserID & "') OR (friendid = '" & UserID & "')", True)
 
+        On Error Resume Next
         For f = 0 To friendIDs.Count - 1
             If friendIDs(f).Split(sysChar(9))(0) = UserID.ToString Then currentFriendID = Integer.Parse(friendIDs(f).Split(sysChar(9))(1)) Else currentFriendID = Integer.Parse(friendIDs(f).Split(sysChar(9))(0))
             If currentFriendID > 0 Then
                 updatedFriendsPack.Append(HoloENCODING.encodeVL64(currentFriendID))
-                If HoloMANAGERS.isOnline(currentFriendID) = True Then '// If the user is online
+                If HoloMANAGERS.hookedUsers.ContainsKey(currentFriendID) = True Then '// If the user is online
                     updatedFriendsPack.Append(HoloMANAGERS.getUserClass(currentFriendID).userDetails.consoleMission & sysChar(2) & HoloMANAGERS.getUserHotelPosition(currentFriendID) & sysChar(2))
                 Else
                     Dim friendsDetails() As String = HoloDB.runReadArray("SELECT consolemission,lastvisit FROM users WHERE id = '" & currentFriendID & "' LIMIT 1")
@@ -1213,10 +1357,10 @@ reGrabID:
                     HoloDB.runQuery("UPDATE guestrooms SET descr = '" & packetContent(1) & "',opt_password = '" & packetContent(2) & "',superusers = '" & packetContent(3) & "' WHERE id = '" & roomID & "' AND owner = '" & userDetails.Name & "' LIMIT 1") '// Run an update query at the database, if the user is the real owner of this room then the stuff will get sorted out nicely, if not, nothing happens (it just doesn't finds a matching row)
                 Else '// Modify guestroom (save)
                     roomID = currentPacket.Substring(2).Split("/")(0) '// Room ID
-                    packetContent(1) = HoloDB.fixChars(HoloMISC.filterWord(packetContent(1).Substring(12), userDetails.Rank)) '// Room description
-                    packetContent(2) = Integer.Parse(packetContent(2).Substring(13)) '// Everyone rights here? (superusers 1/0) Try to parse to integer to check validity
-                    packetContent(3) = Integer.Parse(packetContent(3).Substring(12)) '// Max users inside room at same time. Try to parse to integer to check validity
-                    HoloDB.runQuery("UPDATE guestrooms SET descr = '" & packetContent(1) & "',superusers = '" & packetContent(2) & "',incnt_max = '" & packetContent(3) & "' WHERE id = '" & roomID & "' AND owner = '" & userDetails.Name & "' LIMIT 1") '// Run an update query at the database, if the user is the real owner of this room then the stuff will get sorted out nicely, if not, nothing happens (it just doesn't finds a matching row)
+                    'packetContent(1) = HoloDB.fixChars(HoloMISC.filterWord(packetContent(1).Substring(12), userDetails.Rank)) '// Room description
+                    'packetContent(2) = Integer.Parse(packetContent(2).Substring(13)) '// Everyone rights here? (superusers 1/0) Try to parse to integer to check validity
+                    'packetContent(3) = Integer.Parse(packetContent(3).Substring(12)) '// Max users inside room at same time. Try to parse to integer to check validity
+                    'HoloDB.runQuery("UPDATE guestrooms SET descr = '" & packetContent(1) & "',superusers = '" & packetContent(2) & "',incnt_max = '" & packetContent(3) & "' WHERE id = '" & roomID & "' AND owner = '" & userDetails.Name & "' LIMIT 1") '// Run an update query at the database, if the user is the real owner of this room then the stuff will get sorted out nicely, if not, nothing happens (it just doesn't finds a matching row)
                 End If
 
             Case 3 '// Modify guestroom, get category (BX packet, request)
@@ -1234,6 +1378,8 @@ reGrabID:
                 Dim roomID As Integer = currentPacket.Substring(2)
                 If HoloDB.checkExists("SELECT id FROM guestrooms WHERE id = '" & roomID & "' AND owner = '" & userDetails.Name & "' LIMIT 1") = True Then '// If there exists a room with this ID and the owner is this user [so this user owns this room]
                     HoloDB.runQuery("DELETE FROM guestrooms WHERE id = '" & roomID & "' LIMIT 1") '// Delete this room from database
+                    HoloDB.runQuery("DELETE FROM guestroom_rights WHERE roomid = '" & roomID & "'") '// Delete all roomrights entries
+                    HoloDB.runQuery("DELETE FROM guestroom_votes WHERE roomid = '" & roomID & "'") '// Delete all roomvotes entries
                     HoloDB.runQuery("DELETE FROM furniture WHERE roomid = '" & roomID & "'") '// Delete all the furniture in this room from database
                     HoloDB.runQuery("DELETE FROM furniture_moodlight WHERE roomid = '" & roomID & "' LIMIT 1") '// Delete the moodlight presets of the moodlight in this room [if any]
                 End If
@@ -1302,58 +1448,10 @@ reGrabID:
 #End Region
 #Region "Guestroom actions"
     Private Sub GuestRoom_CheckID()
-        Dim roomID As Integer = currentPacket.Substring(2)
-        Dim roomData() As String = HoloDB.runReadArray("SELECT name,owner,descr,model,state,superusers,showname,incnt_now,incnt_max FROM guestrooms WHERE id = '" & roomID & "' LIMIT 1")
-        If roomData.Count = 0 Then '// Non-existing room
-            '// send error
-        Else
-            Dim allowTrading As Integer = 1 '// Meh we just load this from db later, this will make the 'Trade' button in rooms show up/hide
-            transData("@v" & HoloENCODING.encodeVL64(roomData(5)) & HoloENCODING.encodeVL64(roomData(4)) & HoloENCODING.encodeVL64(roomID) & roomData(1) & sysChar(2) & "model_" & HoloMISC.getRoomModelChar(Byte.Parse(roomData(3))) & sysChar(2) & roomData(0) & sysChar(2) & roomData(2) & sysChar(2) & HoloENCODING.encodeVL64(roomData(6)) & HoloENCODING.encodeVL64(allowTrading) & "H" & HoloENCODING.encodeVL64(roomData(7)) & HoloENCODING.encodeVL64(roomData(8)) & sysChar(1))
-        End If
+        
     End Sub
     Private Sub GuestRoom_CheckState()
-        Dim packetContent() As String = currentPacket.Substring(2).Split("/")
-        Dim roomID As Integer = packetContent(0)
-        Dim roomData() As String = HoloDB.runReadArray("SELECT owner,state,incnt_now,incnt_max FROM guestrooms WHERE id = '" & roomID & "' LIMIT 1")
 
-        If roomData.Count = 0 Then Return '// Room does not exist (there was no row for it found)
-
-        If Not (userDetails.Name = roomData(0)) And (HoloRANK(userDetails.Rank).containsRight("fuse_enter_all_rooms") = False) Then '// Someone who isn't owner/staff enters room
-            If Integer.Parse(roomData(1)) > 0 Then '// This room is password/doorbell-ed
-                If roomData(1) = "1" Then '// Doorbell room
-                    If HoloMANAGERS.hookedRooms.ContainsKey(roomID) = True Then
-                        Dim theRoom As clsHoloROOM = HoloMANAGERS.hookedRooms(roomID) '// Get class of this room
-                        transData("A[" & sysChar(1)) '// Send the 'the doorbell is rang' message
-                        theRoom.sendToRightHavingUsers("A[" & userDetails.Name & sysChar(1)) '// Send the 'USERNAME' has rang the doorbell message to all righthaving users in the room
-                        Return '// Wait till you're being 'invited'
-                    Else '// Room was not loaded; so there are no users inside!
-                        Room_noRoom(False, True) '// Kick the user who wants to enter, who is gonna wait for a doorbell room without users inside? xD
-                    End If
-                Else '// Password room
-                    If Not (HoloDB.runRead("SELECT opt_password FROM guestrooms WHERE roomid = '" & UserID & "' LIMIT 1") = packetContent(1)) Then transData("@a" & "Incorrect flat password" & sysChar(1)) : Return '// Wrong password entered, notify user and stop here
-                End If
-
-                '// Check if the user who enters has rights
-                If HoloDB.checkExists("SELECT userid FROM guestroom_rights WHERE userid = '" & UserID & "' AND roomid = '" & roomID & "' LIMIT 1") = True Then
-                    userDetails.addStatus("flatctrl", vbNullString)
-                    userDetails.hasRights = True
-                End If
-            End If
-            If Integer.Parse(roomData(2)) >= Integer.Parse(roomData(3)) Then transData("C`I" & sysChar(1) & "@R" & sysChar(1)) : Return '// Room is full, notify user and stop here
-
-        Else '// Staff or owner enters room
-            If userDetails.Name = roomData(0) Or HoloRANK(userDetails.Rank).containsRight("fuse_any_room_controller") = True Then
-                userDetails.addStatus("flatctrl", "useradmin")
-                userDetails.hasRights = True
-                userDetails.isOwner = True
-            End If
-        End If
-
-        userDetails.isAllowedInRoom = True
-        If userDetails.isOwner = True Then transData("@o" & sysChar(1))
-        If userDetails.hasRights = True Then transData("@j" & sysChar(1))
-
-        transData("@i" & sysChar(1)) '// Send the 'proceed' packet
     End Sub
     Private Sub Room_rotateMe()
         Dim ToX As Integer = currentPacket.Substring(2).Split(" ")(0)
@@ -1395,7 +1493,7 @@ reGrabID:
         roomCommunicator.doChat(userDetails, talkType, talkMessage)
 
         If HoloRACK.Chat_Animations = True Then '// Chat animations wanted?
-            Dim persnlGesture As String
+            Dim persnlGesture As String = vbNullString
             talkMessage = talkMessage.ToLower
 
             If talkMessage.Contains(":)") Or talkMessage.Contains(":-)") Or talkMessage.Contains("=]") Or talkMessage.Contains(";)") Or talkMessage.Contains(";-)") Or talkMessage.Contains(":d") Or talkMessage.Contains(":p") Then
@@ -1410,11 +1508,6 @@ reGrabID:
 
             userDetails.showTalkAnimation((talkMessage.Length + 50) * 30, persnlGesture)
         End If
-    End Sub
-    Friend Sub Room_noRoom(ByVal removeFromRoomClass As Boolean, ByVal sendKick As Boolean)
-        If removeFromRoomClass = True Then If IsNothing(roomCommunicator) = False Then roomCommunicator.leaveUser(userDetails)
-        If IsNothing(userDetails) = False Then userDetails.Reset()
-        If sendKick = True Then transData("@R" & sysChar(1)) '// Send the kick packet
     End Sub
     Private Sub refreshHand(ByVal strMode As String)
         Dim startID, stopID As Integer
