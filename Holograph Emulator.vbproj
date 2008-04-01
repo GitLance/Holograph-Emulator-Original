@@ -86,7 +86,6 @@
     <Compile Include="VB.NET code\Classes\Core classes\clsHoloMISC.vb" />
     <Compile Include="VB.NET code\Classes\Core classes\clsHoloRACK.vb" />
     <Compile Include="VB.NET code\Classes\Core classes\Connections\clsHoloMUSMGR.vb" />
-    <Compile Include="VB.NET code\Classes\Other classes\clsOstack.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\clsHoloROOM.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\Games\BattleBall\clsHoloBBGAMELOBBY.vb" />
     <Compile Include="VB.NET code\Classes\Room classes\Games\BattleBall\clsHoloBBGAME.vb" />
