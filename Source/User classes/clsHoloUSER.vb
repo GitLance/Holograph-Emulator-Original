@@ -1005,7 +1005,7 @@ Public Class clsHoloUSER
                     End If
 
                     '// Create a presentbox
-                    Dim boxTemplateID As String = HoloDB.runRead("SELECT tid FROM catalogue_items WHERE name_cct = '" & "present_gen" & New Random().Next(1, 3) & "'")
+                    Dim boxTemplateID As String = HoloDB.runRead("SELECT tid FROM catalogue_items WHERE name_cct = '" & "present_gen" & New Random().Next(1, 7) & "'")
                     Dim boxNote As String = HoloMISC.filterWord(packetContent(7))
                     HoloDB.runQuery("INSERT INTO furniture(tid,ownerid,opt_var) VALUES ('" & boxTemplateID & "','" & receiverID & "','!" & boxNote & "')")
                     presentBoxID = HoloCLIENT.catalogueManager.lastItemID()
