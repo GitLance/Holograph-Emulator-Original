@@ -1,0 +1,39 @@
+﻿            If DateTime.Now.CompareTo(DateTime.Parse(endMonthDate)) = 1 Then '// If the current month expires
+                MsgBox("club expires")
+                If restingMonths > 0 Then '// If the user has more prepaid months
+                    MsgBox("maanden over")
+                    passedMonths += 1 '// Set the passed months count +1
+                    restingMonths -= 1 '// Set the resting months count -1
+                    HoloDB.runQuery("UPDATE users_club SET months_expired = '" & passedMonths & "',months_left = '" & restingMonths & "',date_monthstarted = '" & DateTime.Now.ToShortDateString & "' WHERE userid = '" & UserID & "' LIMIT 1") '// Update the users subscriptions stats
+
+                    If passedMonths = 12 Then '// The user has been Club member for 12 months and is starting the 13th month, give a gold Club badge and set his current badge to it
+                        HoloDB.runQuery("INSERT INTO users_badges (userid,badgeid) VALUES ('" & UserID & "','HC2')")
+                        HoloDB.runQuery("UPDATE users SET badgestatus = '1,HC2' WHERE id = '" & UserID & "' LIMIT 1")
+                        processBadges() '// Re-create the badge packet
+                    End If
+
+                    '// Process Club presents (if available for the next month)
+                    'If HoloMISC.clubPresents.ContainsKey(passedMonths + 1) Then
+                    'mainHoloCORE.processClubPresent(UserID, passedMonths) '// Create a presentbox and present for this month
+                    'userDetails.pendingHandPopup = True '// Set a pending handpopup, so when the user enters a room the hand shows up to show the present
+                    'End If
+
+                Else '// The user ran out of his prepaid months, his subscription vanishes
+                    MsgBox("hc is op!")
+                    HoloDB.runQuery("DELETE FROM users_club WHERE userid = '" & UserID & "' LIMIT 1") '// Delete his subscription stats
+                    HoloDB.runQuery("DELETE FROM users_badges WHERE userid = '" & UserID & "' AND (badgeid = 'HC1' OR badgeid = 'HC2') LIMIT 2") '// Delete his HC1 and (if exists) HC2 badge
+                    HoloDB.runQuery("UPDATE users SET figure = '1000118001270012900121001',badgestatus = '0,' WHERE id = '" & UserID & "' LIMIT 1") '// Set the users figure to the default figure, so his special looks will be undone, and set his current badge to NONE, and hide it
+                    userDetails.Figure = "1000118001270012900121001"
+                    transData("@E" & socketID & Convert.ToChar(2) & userDetails.Name & Convert.ToChar(2) & userDetails.Figure & Convert.ToChar(2) & userDetails.Sex & Convert.ToChar(2) & userDetails.Mission & Convert.ToChar(2) & "Hch=s02/253,146,160" & Convert.ToChar(2) & "HI" )
+                End If
+            End If
+
+            '// If the user has days left, then set his subscription status to True and add the extra fuserights, if the user hasn't got a subscription (anymore) then add the notification message ("your subscription has elapsed" etc) to the fuserights packet
+            If restingDays > 0 Then
+                userDetails.clubMember = True
+                restingMonths -= 1 '// Also update the count
+            Else
+                fuseRights += "BK" & HoloRACK.msgSubscriptionExpired.Replace("%name%", userDetails.Name) 
+            End If
+
+        End If
