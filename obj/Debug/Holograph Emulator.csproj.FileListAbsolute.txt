@@ -1,0 +1,5 @@
+D:\Holograph Emulator\bin\Debug\Holograph Emulator.exe
+D:\Holograph Emulator\bin\Debug\Holograph Emulator.pdb
+D:\Holograph Emulator\obj\Debug\ResolveAssemblyReference.cache
+D:\Holograph Emulator\obj\Debug\Holograph Emulator.exe
+D:\Holograph Emulator\obj\Debug\Holograph Emulator.pdb
