@@ -1,5 +1,0 @@
-D:\Holograph Emulator\bin\Release\Holograph Emulator.exe
-D:\Holograph Emulator\bin\Release\Holograph Emulator.pdb
-D:\Holograph Emulator\obj\Release\ResolveAssemblyReference.cache
-D:\Holograph Emulator\obj\Release\Holograph Emulator.exe
-D:\Holograph Emulator\obj\Release\Holograph Emulator.pdb
